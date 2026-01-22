@@ -177,15 +177,12 @@ def cari_stok(raw_keyword):
         items_same_mat = [x for x in hasil if x['mat'] == mat_id]
         first_item = items_same_mat[0]
         nama_barang = first_item['desc']
-        
         spec_text = f"({first_item['spec']})" if first_item['spec'] else ""
-            
         m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
         h_qty = sum(x['qty'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         
         locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper())
         locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper())
-        
         str_loc_m = ", ".join([l for l in locs_m if clean_text(l)]) or "-"
         str_loc_h = ", ".join([l for l in locs_h if clean_text(l)]) or "-"
 
@@ -201,14 +198,11 @@ def cari_stok(raw_keyword):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V5 + DEBUG READY"
+def home(): return "LADEN DEBUG MODE V2"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
-    
-    # --- CCTV: LIHAT DATA YANG MASUK ---
-    # Ini akan memunculkan isi pesan di Log Render
     print(f"[DEBUG] Masuk: {json.dumps(data)}", file=sys.stdout, flush=True) 
 
     message = data.get('message') or data.get('pesan') 
@@ -233,15 +227,14 @@ def webhook():
         
         if trigger_found and keyword:
             jawaban = cari_stok(keyword)
-            requests.post(
+            # --- UPDATE: PRINT HASIL KIRIM FONNTE ---
+            resp = requests.post(
                 "https://api.fonnte.com/send", 
                 headers={"Authorization": FONNTE_TOKEN},
                 data={"target": target_reply, "message": jawaban}
             )
-    else:
-        # Log jika pesan kosong
-        print("[DEBUG] Pesan Kosong / Tidak Terbaca", file=sys.stdout, flush=True)
-
+            print(f"[DEBUG] Fonnte Jawab: {resp.text}", file=sys.stdout, flush=True)
+            
     return jsonify({"status": "ok"}), 200
 
 if __name__ == '__main__':
