@@ -7,6 +7,7 @@ import os
 import json
 import difflib
 import sys
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -96,21 +97,27 @@ def cari_stok(raw_keyword):
 
         if hasil.empty: return f"🙏 Stok *'{raw_keyword}'* boten wonten."
 
-        # FORMAT BALASAN
-        pesan = f"🤖 *LADEN (Cloud)*\n"
-        if pesan_koreksi: pesan += pesan_koreksi
+        # --- FORMATTING TAMPILAN (BAJU BARU) ---
+        jumlah_item = len(hasil)
         
-        unik = hasil[col_mat].unique()[:5] # Max 5 barang
+        # Header Sopan
+        pesan = f"🙏 *Laden jawab ya...*\n"
+        if pesan_koreksi:
+            pesan += pesan_koreksi
+        else:
+            pesan += f"Pencarian: {keyword_search.upper()} ({jumlah_item} items)\n"
+        
+        pesan += "━━━━━━━━━━━━━━━━━━\n"
+        
+        unik = hasil[col_mat].unique()[:7] # Max 7 barang
         for mat in unik:
             row = hasil[hasil[col_mat] == mat].iloc[0]
             nama = row[col_desc]
             
-            # Hitung per Plant
             sub = hasil[hasil[col_mat] == mat]
             m = sub[sub[col_plant].astype(str).str.contains('40AI', case=False, na=False)][col_qty].sum()
             h = sub[sub[col_plant].astype(str).str.contains('40AJ', case=False, na=False)][col_qty].sum()
             
-            # Lokasi
             lok_m, lok_h = "-", "-"
             if col_bin:
                 lm = sub[sub[col_plant].astype(str).str.contains('40AI')][col_bin].unique()
@@ -118,13 +125,20 @@ def cari_stok(raw_keyword):
                 lh = sub[sub[col_plant].astype(str).str.contains('40AJ')][col_bin].unique()
                 lok_h = ",".join([str(x) for x in lh if str(x).lower() not in ['nan','']]) or "-"
             
-            # Spec
             spec_info = ""
             if col_spec:
                  s = str(row[col_spec])
                  if s.lower() not in ['nan', '']: spec_info = f"({s})"
 
-            pesan += f"📦 *{nama}* {spec_info}\n   Mat: {mat}\n   Mining: {int(m)} | Hauling: {int(h)}\n   Lok: {lok_m} | {lok_h}\n\n"
+            # Format Item ala Bot Lama
+            pesan += f"*{nama}*\n"
+            pesan += f"Mat: {mat} {spec_info}\n"
+            pesan += f"Mining : {int(m)} | Hauling : {int(h)}\n"
+            pesan += f"({lok_m} | {lok_h})\n\n"
+            
+        # Footer Waktu
+        waktu_skrg = datetime.now().strftime("%d-%m-%Y %H:%M")
+        pesan += f"🕒 _Data Update: Live via Google Sheet_"
             
         return pesan
 
@@ -136,20 +150,28 @@ def home(): return "LADEN IS READY"
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
-    log(f"In: {data}") # Log masuk
     
-    # --- PERBAIKAN UTAMA: BACA KUNCI INDONESIA & INGGRIS ---
-    # Fonnte kadang kirim 'message', kadang 'pesan'
     message = data.get('message') or data.get('pesan') 
-    # Fonnte kadang kirim 'sender', kadang 'pengirim' (Nomor HP/Grup ID)
-    sender = data.get('sender') or data.get('pengirim') or data.get('from')
+    target_reply = data.get('pengirim') or data.get('id') or data.get('sender')
     
     if message:
         msg_lower = message.lower()
         trigger_found = False
         keyword = ""
 
-        # Cek Trigger
+        # Cek Intro
+        intro_keys = ["siapa", "intro", "kenalan"]
+        if ("laden" in msg_lower) and any(k in msg_lower for k in intro_keys):
+             intro_msg = (
+                "🤝 *Salam Kenal, Saya LADEN*\n\n"
+                "*L.A.D.E.N* (Logistik Assistant Data Entry Network)\n"
+                "Asisten digital logistik yang siap melayani 24 jam non-stop.\n\n"
+                "Monggo, ketik *#tanyaladen* atau *Tanya Den* diikuti nama barang."
+            )
+             requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": intro_msg})
+             return jsonify({"status": "ok"}), 200
+
+        # Cek Stok
         for trig in TRIGGERS_LADEN:
             if trig in msg_lower:
                 keyword = msg_lower.replace(trig, "").replace("stok", "").strip()
@@ -157,16 +179,12 @@ def webhook():
                 break
         
         if trigger_found and keyword:
-            log(f"🔍 Cari: {keyword}")
             jawaban = cari_stok(keyword)
-            
-            # Kirim Balasan
             requests.post(
                 "https://api.fonnte.com/send", 
                 headers={"Authorization": FONNTE_TOKEN},
-                data={"target": sender, "message": jawaban}
+                data={"target": target_reply, "message": jawaban}
             )
-            log(f"✅ Balas ke {sender}")
 
     return jsonify({"status": "ok"}), 200
 
