@@ -18,7 +18,7 @@ SHEET_ID = "1GMQ15xaMpJokmyNeckO6PRxtajiRV4yHB1U0wirRcGU"
 # --- GLOBAL CACHE ---
 CACHE_DATA = []      
 CACHE_TIMESTAMP = None
-CACHE_DURATION = 900 # Refresh 15 Menit
+CACHE_DURATION = 900 
 
 # --- KAMUS PINTAR ---
 KAMUS_SINONIM = {
@@ -56,7 +56,6 @@ def connect_google_sheet():
         return None
 
 def clean_text(text):
-    """Membersihkan teks dari 'nan', 'none', dll"""
     if not text: return ""
     t = str(text).strip()
     if t.lower() in ["nan", "none", "null", "-", "0"]: return ""
@@ -66,7 +65,6 @@ def get_data_lightweight():
     global CACHE_DATA, CACHE_TIMESTAMP
     now = datetime.now()
     
-    # Cek Cache
     if CACHE_DATA and CACHE_TIMESTAMP and (now - CACHE_TIMESTAMP).total_seconds() < CACHE_DURATION:
         return CACHE_DATA
 
@@ -80,17 +78,12 @@ def get_data_lightweight():
         
         headers = [h.strip().lower() for h in raw_rows[0]]
         
-        # --- PERBAIKAN PENCARIAN KOLOM (V5) ---
         idx_desc = next((i for i, h in enumerate(headers) if "desc" in h), -1)
         idx_mat  = next((i for i, h in enumerate(headers) if "material" in h and "desc" not in h), -1)
         idx_qty  = next((i for i, h in enumerate(headers) if "total" in h or "stock" in h or "unrestricted" in h), -1)
         idx_plant = next((i for i, h in enumerate(headers) if "plant" in h), -1)
         idx_bin = next((i for i, h in enumerate(headers) if "bin" in h), -1)
-        
-        # PENTING: Cari kata "procurement" agar tidak tertukar dengan "stock"
         idx_spec = next((i for i, h in enumerate(headers) if "procurement" in h), -1)
-        
-        # Cari Info Update (Kolom X)
         idx_upd = next((i for i, h in enumerate(headers) if "update" in h), -1)
 
         if idx_desc == -1 or idx_qty == -1:
@@ -100,16 +93,11 @@ def get_data_lightweight():
         clean_data = []
         for row in raw_rows[1:]:
             if len(row) <= idx_qty: continue
-            
             raw_qty = row[idx_qty]
             try:
                 qty_val = float(re.sub(r'[^\d.]', '', str(raw_qty)))
             except:
                 qty_val = 0.0
-
-            # Ambil & Bersihkan Data
-            spec_val = clean_text(row[idx_spec]) if idx_spec != -1 else ""
-            upd_val = clean_text(row[idx_upd]) if idx_upd != -1 else ""
 
             item = {
                 'desc': str(row[idx_desc]).strip(),
@@ -117,8 +105,8 @@ def get_data_lightweight():
                 'qty': qty_val,
                 'plant': str(row[idx_plant]).strip() if idx_plant != -1 else "-",
                 'bin': str(row[idx_bin]).strip() if idx_bin != -1 else "-",
-                'spec': spec_val,
-                'last_update': upd_val
+                'spec': clean_text(row[idx_spec]) if idx_spec != -1 else "",
+                'last_update': clean_text(row[idx_upd]) if idx_upd != -1 else ""
             }
             clean_data.append(item)
             
@@ -146,7 +134,6 @@ def cari_stok(raw_keyword):
         match_all = True
         teks_desc = item['desc'].lower()
         teks_mat = item['mat'].lower()
-        
         for k in keywords_split:
             if (k not in teks_desc) and (k not in teks_mat):
                 match_all = False
@@ -154,7 +141,6 @@ def cari_stok(raw_keyword):
         if match_all:
             hasil.append(item)
 
-    # AUTO CORRECT
     pesan_koreksi = ""
     if not hasil:
         all_names = list(set([d['desc'] for d in data]))
@@ -166,7 +152,6 @@ def cari_stok(raw_keyword):
 
     if not hasil: return f"🙏 Stok *'{raw_keyword}'* boten wonten."
 
-    # --- HITUNG BARANG UNIK ---
     unik_mat_list = []
     seen = set()
     for x in hasil:
@@ -183,7 +168,6 @@ def cari_stok(raw_keyword):
     
     ditampilkan = 0
     waktu_update_data = "Live via Google Sheet" 
-    # Coba ambil jam dari data pertama yang punya info update
     for h in hasil:
         if h['last_update']:
             waktu_update_data = h['last_update']
@@ -194,23 +178,16 @@ def cari_stok(raw_keyword):
         first_item = items_same_mat[0]
         nama_barang = first_item['desc']
         
-        # Tampilkan Spec hanya jika ada isinya
-        spec_text = ""
-        if first_item['spec']:
-            spec_text = f"({first_item['spec']})"
+        spec_text = f"({first_item['spec']})" if first_item['spec'] else ""
             
         m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
         h_qty = sum(x['qty'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         
-        # Lokasi
         locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper())
         locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         
-        clean_locs_m = [l for l in locs_m if clean_text(l)]
-        clean_locs_h = [l for l in locs_h if clean_text(l)]
-        
-        str_loc_m = ", ".join(clean_locs_m) if clean_locs_m else "-"
-        str_loc_h = ", ".join(clean_locs_h) if clean_locs_h else "-"
+        str_loc_m = ", ".join([l for l in locs_m if clean_text(l)]) or "-"
+        str_loc_h = ", ".join([l for l in locs_h if clean_text(l)]) or "-"
 
         pesan += f"*{nama_barang}*\n"
         pesan += f"Mat: {mat_id} {spec_text}\n"
@@ -220,17 +197,20 @@ def cari_stok(raw_keyword):
         ditampilkan += 1
         if ditampilkan >= 7: break
         
-    # FOOTER WAKTU DARI EXCEL
     pesan += f"🕒 {waktu_update_data}"
-        
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V5 READY"
+def home(): return "LADEN V5 + DEBUG READY"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
+    
+    # --- CCTV: LIHAT DATA YANG MASUK ---
+    # Ini akan memunculkan isi pesan di Log Render
+    print(f"[DEBUG] Masuk: {json.dumps(data)}", file=sys.stdout, flush=True) 
+
     message = data.get('message') or data.get('pesan') 
     target_reply = data.get('pengirim') or data.get('id') or data.get('sender')
     
@@ -258,6 +238,9 @@ def webhook():
                 headers={"Authorization": FONNTE_TOKEN},
                 data={"target": target_reply, "message": jawaban}
             )
+    else:
+        # Log jika pesan kosong
+        print("[DEBUG] Pesan Kosong / Tidak Terbaca", file=sys.stdout, flush=True)
 
     return jsonify({"status": "ok"}), 200
 
