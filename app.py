@@ -18,8 +18,7 @@ SHEET_ID = "1GMQ15xaMpJokmyNeckO6PRxtajiRV4yHB1U0wirRcGU"
 # --- GLOBAL CACHE ---
 CACHE_DATA = []      
 CACHE_TIMESTAMP = None
-CACHE_TIME_STR = "-" # Untuk menyimpan teks waktu update terakhir
-CACHE_DURATION = 900 # 15 Menit
+CACHE_DURATION = 900 # Refresh 15 Menit
 
 # --- KAMUS PINTAR ---
 KAMUS_SINONIM = {
@@ -56,8 +55,15 @@ def connect_google_sheet():
         log(f"Error GSheet: {e}")
         return None
 
+def clean_text(text):
+    """Membersihkan teks dari 'nan', 'none', dll"""
+    if not text: return ""
+    t = str(text).strip()
+    if t.lower() in ["nan", "none", "null", "-", "0"]: return ""
+    return t
+
 def get_data_lightweight():
-    global CACHE_DATA, CACHE_TIMESTAMP, CACHE_TIME_STR
+    global CACHE_DATA, CACHE_TIMESTAMP
     now = datetime.now()
     
     # Cek Cache
@@ -74,13 +80,18 @@ def get_data_lightweight():
         
         headers = [h.strip().lower() for h in raw_rows[0]]
         
-        # Cari Index Kolom
+        # --- PERBAIKAN PENCARIAN KOLOM (V5) ---
         idx_desc = next((i for i, h in enumerate(headers) if "desc" in h), -1)
         idx_mat  = next((i for i, h in enumerate(headers) if "material" in h and "desc" not in h), -1)
         idx_qty  = next((i for i, h in enumerate(headers) if "total" in h or "stock" in h or "unrestricted" in h), -1)
         idx_plant = next((i for i, h in enumerate(headers) if "plant" in h), -1)
         idx_bin = next((i for i, h in enumerate(headers) if "bin" in h), -1)
-        idx_spec = next((i for i, h in enumerate(headers) if "spec" in h or "procurement" in h), -1)
+        
+        # PENTING: Cari kata "procurement" agar tidak tertukar dengan "stock"
+        idx_spec = next((i for i, h in enumerate(headers) if "procurement" in h), -1)
+        
+        # Cari Info Update (Kolom X)
+        idx_upd = next((i for i, h in enumerate(headers) if "update" in h), -1)
 
         if idx_desc == -1 or idx_qty == -1:
             log("❌ Format Header Salah")
@@ -96,22 +107,23 @@ def get_data_lightweight():
             except:
                 qty_val = 0.0
 
+            # Ambil & Bersihkan Data
+            spec_val = clean_text(row[idx_spec]) if idx_spec != -1 else ""
+            upd_val = clean_text(row[idx_upd]) if idx_upd != -1 else ""
+
             item = {
                 'desc': str(row[idx_desc]).strip(),
                 'mat': str(row[idx_mat]).strip() if idx_mat != -1 else "-",
                 'qty': qty_val,
                 'plant': str(row[idx_plant]).strip() if idx_plant != -1 else "-",
                 'bin': str(row[idx_bin]).strip() if idx_bin != -1 else "-",
-                'spec': str(row[idx_spec]).strip() if idx_spec != -1 else ""
+                'spec': spec_val,
+                'last_update': upd_val
             }
             clean_data.append(item)
             
         CACHE_DATA = clean_data
         CACHE_TIMESTAMP = now
-        # Update Jam Fetching (WIB = UTC+7)
-        jam_wib = now + timedelta(hours=7)
-        CACHE_TIME_STR = jam_wib.strftime("%d-%m-%Y %H:%M") + " WIB"
-        
         log(f"✅ Berhasil Cache {len(clean_data)} item.")
         return CACHE_DATA
 
@@ -154,7 +166,7 @@ def cari_stok(raw_keyword):
 
     if not hasil: return f"🙏 Stok *'{raw_keyword}'* boten wonten."
 
-    # --- PERBAIKAN LOGIKA HITUNG (COUNT UNIQUE) ---
+    # --- HITUNG BARANG UNIK ---
     unik_mat_list = []
     seen = set()
     for x in hasil:
@@ -162,7 +174,7 @@ def cari_stok(raw_keyword):
             unik_mat_list.append(x['mat'])
             seen.add(x['mat'])
             
-    jumlah_item = len(unik_mat_list) # Hitung Barang Unik, bukan baris
+    jumlah_item = len(unik_mat_list)
     
     pesan = f"🙏 *Laden jawab ya...*\n"
     if pesan_koreksi: pesan += pesan_koreksi
@@ -170,32 +182,36 @@ def cari_stok(raw_keyword):
     pesan += "━━━━━━━━━━━━━━━━━━\n"
     
     ditampilkan = 0
+    waktu_update_data = "Live via Google Sheet" 
+    # Coba ambil jam dari data pertama yang punya info update
+    for h in hasil:
+        if h['last_update']:
+            waktu_update_data = h['last_update']
+            break
     
     for mat_id in unik_mat_list:
-        # Ambil semua baris milik material ini (untuk hitung total & lokasi)
         items_same_mat = [x for x in hasil if x['mat'] == mat_id]
-        
-        # Ambil data umum dari baris pertama
         first_item = items_same_mat[0]
         nama_barang = first_item['desc']
         
-        # PERBAIKAN SPEC: Tampilkan jika ada
+        # Tampilkan Spec hanya jika ada isinya
         spec_text = ""
-        if first_item['spec'] and first_item['spec'] != "-":
+        if first_item['spec']:
             spec_text = f"({first_item['spec']})"
             
-        # Hitung Stok
         m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
         h_qty = sum(x['qty'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         
-        # Cek Lokasi (Bin)
-        locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper() and x['bin'] not in ['-', ''])
-        locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper() and x['bin'] not in ['-', ''])
+        # Lokasi
+        locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper())
+        locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         
-        str_loc_m = ", ".join(locs_m) if locs_m else "-"
-        str_loc_h = ", ".join(locs_h) if locs_h else "-"
+        clean_locs_m = [l for l in locs_m if clean_text(l)]
+        clean_locs_h = [l for l in locs_h if clean_text(l)]
+        
+        str_loc_m = ", ".join(clean_locs_m) if clean_locs_m else "-"
+        str_loc_h = ", ".join(clean_locs_h) if clean_locs_h else "-"
 
-        # Format Tampilan Akhir
         pesan += f"*{nama_barang}*\n"
         pesan += f"Mat: {mat_id} {spec_text}\n"
         pesan += f"Mining : {int(m_qty)} | Hauling : {int(h_qty)}\n"
@@ -204,13 +220,13 @@ def cari_stok(raw_keyword):
         ditampilkan += 1
         if ditampilkan >= 7: break
         
-    # FOOTER WAKTU UPDATE (CACHE TIME)
-    pesan += f"🕒 _Data Update: {CACHE_TIME_STR}_"
+    # FOOTER WAKTU DARI EXCEL
+    pesan += f"🕒 {waktu_update_data}"
         
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V3 READY"
+def home(): return "LADEN V5 READY"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
