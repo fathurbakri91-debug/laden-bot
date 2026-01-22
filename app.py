@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 import requests
-import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
@@ -8,6 +7,7 @@ import json
 import difflib
 import sys
 from datetime import datetime, timedelta
+import re
 
 app = Flask(__name__)
 
@@ -15,10 +15,11 @@ app = Flask(__name__)
 FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN") 
 SHEET_ID = "1GMQ15xaMpJokmyNeckO6PRxtajiRV4yHB1U0wirRcGU"
 
-# --- GLOBAL CACHE (Ingatan Sementara) ---
-CACHE_DF = None
+# --- GLOBAL CACHE ---
+CACHE_DATA = []      
 CACHE_TIMESTAMP = None
-CACHE_DURATION = 600  # Refresh data setiap 600 detik (10 Menit)
+CACHE_TIME_STR = "-" # Untuk menyimpan teks waktu update terakhir
+CACHE_DURATION = 900 # 15 Menit
 
 # --- KAMUS PINTAR ---
 KAMUS_SINONIM = {
@@ -55,128 +56,161 @@ def connect_google_sheet():
         log(f"Error GSheet: {e}")
         return None
 
-def get_data_turbo():
-    global CACHE_DF, CACHE_TIMESTAMP
-    
-    # Cek apakah harus download ulang?
+def get_data_lightweight():
+    global CACHE_DATA, CACHE_TIMESTAMP, CACHE_TIME_STR
     now = datetime.now()
-    butuh_refresh = False
     
-    if CACHE_DF is None:
-        butuh_refresh = True
-        log("🔄 Memulai Download Data Pertama...")
-    elif (now - CACHE_TIMESTAMP).total_seconds() > CACHE_DURATION:
-        butuh_refresh = True
-        log("⌛ Data kadaluarsa. Download ulang...")
-    
-    if butuh_refresh:
-        try:
-            sheet = connect_google_sheet()
-            if not sheet: return None
+    # Cek Cache
+    if CACHE_DATA and CACHE_TIMESTAMP and (now - CACHE_TIMESTAMP).total_seconds() < CACHE_DURATION:
+        return CACHE_DATA
+
+    log("🔄 Download Data Baru...")
+    try:
+        sheet = connect_google_sheet()
+        if not sheet: return []
+        
+        raw_rows = sheet.get_all_values()
+        if not raw_rows: return []
+        
+        headers = [h.strip().lower() for h in raw_rows[0]]
+        
+        # Cari Index Kolom
+        idx_desc = next((i for i, h in enumerate(headers) if "desc" in h), -1)
+        idx_mat  = next((i for i, h in enumerate(headers) if "material" in h and "desc" not in h), -1)
+        idx_qty  = next((i for i, h in enumerate(headers) if "total" in h or "stock" in h or "unrestricted" in h), -1)
+        idx_plant = next((i for i, h in enumerate(headers) if "plant" in h), -1)
+        idx_bin = next((i for i, h in enumerate(headers) if "bin" in h), -1)
+        idx_spec = next((i for i, h in enumerate(headers) if "spec" in h or "procurement" in h), -1)
+
+        if idx_desc == -1 or idx_qty == -1:
+            log("❌ Format Header Salah")
+            return []
+
+        clean_data = []
+        for row in raw_rows[1:]:
+            if len(row) <= idx_qty: continue
             
-            # PENTING: get_all_records boros memori. Gunakan get_all_values.
-            raw_data = sheet.get_all_values()
-            if not raw_data: return None
+            raw_qty = row[idx_qty]
+            try:
+                qty_val = float(re.sub(r'[^\d.]', '', str(raw_qty)))
+            except:
+                qty_val = 0.0
+
+            item = {
+                'desc': str(row[idx_desc]).strip(),
+                'mat': str(row[idx_mat]).strip() if idx_mat != -1 else "-",
+                'qty': qty_val,
+                'plant': str(row[idx_plant]).strip() if idx_plant != -1 else "-",
+                'bin': str(row[idx_bin]).strip() if idx_bin != -1 else "-",
+                'spec': str(row[idx_spec]).strip() if idx_spec != -1 else ""
+            }
+            clean_data.append(item)
             
-            # Baris 1 adalah Header
-            headers = [h.strip().lower() for h in raw_data[0]]
-            rows = raw_data[1:]
-            
-            df = pd.DataFrame(rows, columns=headers)
-            
-            # Pre-cleaning data angka agar ringan saat dicari
-            col_qty = next((c for c in df.columns if "total" in c or "stock" in c or "unrestricted" in c), None)
-            if col_qty:
-                df[col_qty] = pd.to_numeric(df[col_qty].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0)
-            
-            CACHE_DF = df
-            CACHE_TIMESTAMP = now
-            log(f"✅ Data Terupdate! ({len(df)} baris)")
-            
-        except Exception as e:
-            log(f"⚠️ Gagal Download: {e}")
-            if CACHE_DF is not None: return CACHE_DF # Pakai data lama kalau gagal
-            return None
-            
-    return CACHE_DF
+        CACHE_DATA = clean_data
+        CACHE_TIMESTAMP = now
+        # Update Jam Fetching (WIB = UTC+7)
+        jam_wib = now + timedelta(hours=7)
+        CACHE_TIME_STR = jam_wib.strftime("%d-%m-%Y %H:%M") + " WIB"
+        
+        log(f"✅ Berhasil Cache {len(clean_data)} item.")
+        return CACHE_DATA
+
+    except Exception as e:
+        log(f"⚠️ Gagal Download: {e}")
+        return CACHE_DATA
 
 def cari_stok(raw_keyword):
-    try:
-        df = get_data_turbo() # PAKAI DATA CACHE
-        if df is None or df.empty: return "⚠️ Gagal mengambil data server."
-        
-        # Mapping Kolom
-        col_desc = next((c for c in df.columns if "desc" in c), None)
-        col_mat  = next((c for c in df.columns if "material" in c and "desc" not in c), None)
-        col_qty  = next((c for c in df.columns if "total" in c or "stock" in c or "unrestricted" in c), None)
-        col_plant = next((c for c in df.columns if "plant" in c), None)
-        col_bin = next((c for c in df.columns if "bin" in c), None)
-        col_spec = next((c for c in df.columns if "spec" in c or "procurement" in c), None)
+    data = get_data_lightweight()
+    if not data: return "⚠️ Gagal mengambil data server."
 
-        if not (col_desc and col_qty): return "❌ Format Data Salah."
-        
-        # LOGIK PINTAR
-        clean_keyword = raw_keyword.lower().strip()
-        kata_kata = clean_keyword.split()
-        kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
-        keyword_search = " ".join(kata_baru)
+    clean_keyword = raw_keyword.lower().strip()
+    kata_kata = clean_keyword.split()
+    kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
+    keyword_search = " ".join(kata_baru)
+    keywords_split = keyword_search.split()
 
-        mask = pd.Series([True] * len(df))
-        for k in keyword_search.split():
-            mask = mask & (df[col_desc].astype(str).str.contains(k, case=False, na=False) | 
-                           df[col_mat].astype(str).str.contains(k, case=False, na=False))
+    hasil = []
+    for item in data:
+        match_all = True
+        teks_desc = item['desc'].lower()
+        teks_mat = item['mat'].lower()
         
-        hasil = df[mask]
-        
-        # AUTO CORRECT
-        pesan_koreksi = ""
-        if hasil.empty:
-            semua_barang = df[col_desc].astype(str).dropna().unique().tolist()
-            mirip = difflib.get_close_matches(keyword_search.upper(), semua_barang, n=1, cutoff=0.5)
-            if mirip:
-                tebakan = mirip[0]
-                pesan_koreksi = f"⚠️ _Mboten wonten. Maksud Bapak:_ *{tebakan}*?\n\n"
-                hasil = df[df[col_desc].astype(str).str.contains(tebakan, case=False, na=False)]
+        for k in keywords_split:
+            if (k not in teks_desc) and (k not in teks_mat):
+                match_all = False
+                break
+        if match_all:
+            hasil.append(item)
 
-        if hasil.empty: return f"🙏 Stok *'{raw_keyword}'* boten wonten."
+    # AUTO CORRECT
+    pesan_koreksi = ""
+    if not hasil:
+        all_names = list(set([d['desc'] for d in data]))
+        mirip = difflib.get_close_matches(keyword_search.upper(), all_names, n=1, cutoff=0.5)
+        if mirip:
+            tebakan = mirip[0]
+            pesan_koreksi = f"⚠️ _Mboten wonten. Maksud Bapak:_ *{tebakan}*?\n\n"
+            hasil = [d for d in data if tebakan.lower() in d['desc'].lower()]
 
-        # FORMATTING TAMPILAN
-        jumlah_item = len(hasil)
-        
-        pesan = f"🙏 *Laden jawab ya...*\n"
-        if pesan_koreksi: pesan += pesan_koreksi
-        else: pesan += f"Pencarian: {keyword_search.upper()} ({jumlah_item} items)\n"
-        pesan += "━━━━━━━━━━━━━━━━━━\n"
-        
-        unik = hasil[col_mat].unique()[:7] 
-        for mat in unik:
-            row = hasil[hasil[col_mat] == mat].iloc[0]
-            nama = row[col_desc]
+    if not hasil: return f"🙏 Stok *'{raw_keyword}'* boten wonten."
+
+    # --- PERBAIKAN LOGIKA HITUNG (COUNT UNIQUE) ---
+    unik_mat_list = []
+    seen = set()
+    for x in hasil:
+        if x['mat'] not in seen:
+            unik_mat_list.append(x['mat'])
+            seen.add(x['mat'])
             
-            sub = hasil[hasil[col_mat] == mat]
-            m = sub[sub[col_plant].astype(str).str.contains('40AI', case=False, na=False)][col_qty].sum()
-            h = sub[sub[col_plant].astype(str).str.contains('40AJ', case=False, na=False)][col_qty].sum()
+    jumlah_item = len(unik_mat_list) # Hitung Barang Unik, bukan baris
+    
+    pesan = f"🙏 *Laden jawab ya...*\n"
+    if pesan_koreksi: pesan += pesan_koreksi
+    else: pesan += f"Pencarian: {keyword_search.upper()} ({jumlah_item} items)\n"
+    pesan += "━━━━━━━━━━━━━━━━━━\n"
+    
+    ditampilkan = 0
+    
+    for mat_id in unik_mat_list:
+        # Ambil semua baris milik material ini (untuk hitung total & lokasi)
+        items_same_mat = [x for x in hasil if x['mat'] == mat_id]
+        
+        # Ambil data umum dari baris pertama
+        first_item = items_same_mat[0]
+        nama_barang = first_item['desc']
+        
+        # PERBAIKAN SPEC: Tampilkan jika ada
+        spec_text = ""
+        if first_item['spec'] and first_item['spec'] != "-":
+            spec_text = f"({first_item['spec']})"
             
-            lok_m, lok_h = "-", "-"
-            if col_bin:
-                lm = sub[sub[col_plant].astype(str).str.contains('40AI')][col_bin].unique()
-                lok_m = ",".join([str(x) for x in lm if str(x).lower() not in ['nan','']]) or "-"
-                lh = sub[sub[col_plant].astype(str).str.contains('40AJ')][col_bin].unique()
-                lok_h = ",".join([str(x) for x in lh if str(x).lower() not in ['nan','']]) or "-"
-            
-            spec_info = ""
-            if col_spec:
-                 s = str(row[col_spec])
-                 if s.lower() not in ['nan', '']: spec_info = f"({s})"
+        # Hitung Stok
+        m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
+        h_qty = sum(x['qty'] for x in items_same_mat if '40AJ' in x['plant'].upper())
+        
+        # Cek Lokasi (Bin)
+        locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper() and x['bin'] not in ['-', ''])
+        locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper() and x['bin'] not in ['-', ''])
+        
+        str_loc_m = ", ".join(locs_m) if locs_m else "-"
+        str_loc_h = ", ".join(locs_h) if locs_h else "-"
 
-            pesan += f"*{nama}*\nMat: {mat} {spec_info}\nMining : {int(m)} | Hauling : {int(h)}\n({lok_m} | {lok_h})\n\n"
-            
-        return pesan
-
-    except Exception as e: return f"⚠️ Error: {e}"
+        # Format Tampilan Akhir
+        pesan += f"*{nama_barang}*\n"
+        pesan += f"Mat: {mat_id} {spec_text}\n"
+        pesan += f"Mining : {int(m_qty)} | Hauling : {int(h_qty)}\n"
+        pesan += f"({str_loc_m} | {str_loc_h})\n\n"
+        
+        ditampilkan += 1
+        if ditampilkan >= 7: break
+        
+    # FOOTER WAKTU UPDATE (CACHE TIME)
+    pesan += f"🕒 _Data Update: {CACHE_TIME_STR}_"
+        
+    return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN TURBO MODE IS ON!"
+def home(): return "LADEN V3 READY"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -189,7 +223,6 @@ def webhook():
         trigger_found = False
         keyword = ""
         
-        # Cek Intro
         intro_keys = ["siapa", "intro", "kenalan"]
         if ("laden" in msg_lower) and any(k in msg_lower for k in intro_keys):
              intro_msg = "🤝 *Salam Kenal, Saya LADEN*\nSiap melayani cek stok 24 Jam.\nKetik *Tanya Den [Barang]*"
@@ -203,7 +236,6 @@ def webhook():
                 break
         
         if trigger_found and keyword:
-            # Gunakan Threading atau langsung balas (karena sekarang cepat pakai cache)
             jawaban = cari_stok(keyword)
             requests.post(
                 "https://api.fonnte.com/send", 
@@ -214,4 +246,4 @@ def webhook():
     return jsonify({"status": "ok"}), 200
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5000, threaded=True)
