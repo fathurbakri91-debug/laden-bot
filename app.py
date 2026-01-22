@@ -15,10 +15,11 @@ app = Flask(__name__)
 FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN") 
 SHEET_ID = "1GMQ15xaMpJokmyNeckO6PRxtajiRV4yHB1U0wirRcGU"
 
-# --- GLOBAL CACHE ---
+# --- GLOBAL MEMORY ---
 CACHE_DATA = []      
 CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
+USER_SESSIONS = {} 
 
 # --- KAMUS PINTAR ---
 KAMUS_SINONIM = {
@@ -61,6 +62,10 @@ def clean_text(text):
     if t.lower() in ["nan", "none", "null", "-", "0"]: return ""
     return t
 
+def normalize_pn(text):
+    """Menghapus spasi dan tanda baca untuk pencarian Part Number cerdas"""
+    return re.sub(r'[^a-zA-Z0-9]', '', str(text).lower())
+
 def get_data_lightweight():
     global CACHE_DATA, CACHE_TIMESTAMP
     now = datetime.now()
@@ -85,6 +90,8 @@ def get_data_lightweight():
         idx_bin = next((i for i, h in enumerate(headers) if "bin" in h), -1)
         idx_spec = next((i for i, h in enumerate(headers) if "procurement" in h), -1)
         idx_upd = next((i for i, h in enumerate(headers) if "update" in h), -1)
+        # Cari Kolom Batch
+        idx_batch = next((i for i, h in enumerate(headers) if "batch" in h), -1)
 
         if idx_desc == -1 or idx_qty == -1:
             log("❌ Format Header Salah")
@@ -106,7 +113,8 @@ def get_data_lightweight():
                 'plant': str(row[idx_plant]).strip() if idx_plant != -1 else "-",
                 'bin': str(row[idx_bin]).strip() if idx_bin != -1 else "-",
                 'spec': clean_text(row[idx_spec]) if idx_spec != -1 else "",
-                'last_update': clean_text(row[idx_upd]) if idx_upd != -1 else ""
+                'last_update': clean_text(row[idx_upd]) if idx_upd != -1 else "",
+                'batch': clean_text(row[idx_batch]) if idx_batch != -1 else ""
             }
             clean_data.append(item)
             
@@ -119,7 +127,7 @@ def get_data_lightweight():
         log(f"⚠️ Gagal Download: {e}")
         return CACHE_DATA
 
-def cari_stok(raw_keyword):
+def cari_stok(raw_keyword, page=0):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
 
@@ -128,21 +136,33 @@ def cari_stok(raw_keyword):
     kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
     keyword_search = " ".join(kata_baru)
     keywords_split = keyword_search.split()
+    
+    # Keyword Normal (tanpa spasi/-) untuk Part Number
+    keyword_pn_clean = normalize_pn(keyword_search)
 
     hasil = []
     for item in data:
-        match_all = True
+        # 1. Cek Deskripsi (Logic Biasa per kata)
+        match_desc = True
         teks_desc = item['desc'].lower()
-        teks_mat = item['mat'].lower()
         for k in keywords_split:
-            if (k not in teks_desc) and (k not in teks_mat):
-                match_all = False
+            if k not in teks_desc:
+                match_desc = False
                 break
-        if match_all:
+        
+        # 2. Cek Part Number (Logic Cerdas Anti-Strip)
+        # LCM-7 (di data LC-M7) -> lcm7 == lcm7 -> MATCH!
+        match_mat = False
+        if keyword_pn_clean in normalize_pn(item['mat']):
+            match_mat = True
+            
+        # Gabungkan: Jika cocok deskripsi ATAU cocok part number
+        if match_desc or match_mat:
             hasil.append(item)
 
     pesan_koreksi = ""
-    if not hasil:
+    # Auto Correct jika kosong
+    if not hasil and page == 0:
         all_names = list(set([d['desc'] for d in data]))
         mirip = difflib.get_close_matches(keyword_search.upper(), all_names, n=1, cutoff=0.5)
         if mirip:
@@ -152,6 +172,8 @@ def cari_stok(raw_keyword):
 
     if not hasil: return f"🙏 Stok *'{raw_keyword}'* boten wonten."
 
+    # --- PAGINATION & GROUPING ---
+    # Kelompokkan Material Unik
     unik_mat_list = []
     seen = set()
     for x in hasil:
@@ -159,25 +181,42 @@ def cari_stok(raw_keyword):
             unik_mat_list.append(x['mat'])
             seen.add(x['mat'])
             
-    jumlah_item = len(unik_mat_list)
+    total_items = len(unik_mat_list)
+    ITEMS_PER_PAGE = 10  # --- UPDATE: 10 ITEM PER HALAMAN ---
+    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     
+    if page >= total_pages: return "⚠️ Sudah halaman terakhir, Pak."
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    current_page_mats = unik_mat_list[start_idx:end_idx]
+
+    # --- BUILD MESSAGE ---
     pesan = f"🙏 *Laden jawab ya...*\n"
     if pesan_koreksi: pesan += pesan_koreksi
-    else: pesan += f"Pencarian: {keyword_search.upper()} ({jumlah_item} items)\n"
+    else: pesan += f"Pencarian: {keyword_search.upper()} ({total_items} items)\n"
+    
+    pesan += f"📖 Halaman {page+1} dari {total_pages}\n"
     pesan += "━━━━━━━━━━━━━━━━━━\n"
     
-    ditampilkan = 0
     waktu_update_data = "Live via Google Sheet" 
     for h in hasil:
         if h['last_update']:
             waktu_update_data = h['last_update']
             break
     
-    for mat_id in unik_mat_list:
+    for mat_id in current_page_mats:
         items_same_mat = [x for x in hasil if x['mat'] == mat_id]
         first_item = items_same_mat[0]
         nama_barang = first_item['desc']
+        
+        # --- UPDATE: BATCH DISPLAY ---
+        batch_info = ""
+        if first_item['batch']:
+            batch_info = f"({first_item['batch']})"
+        
         spec_text = f"({first_item['spec']})" if first_item['spec'] else ""
+        
         m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
         h_qty = sum(x['qty'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         
@@ -186,32 +225,35 @@ def cari_stok(raw_keyword):
         str_loc_m = ", ".join([l for l in locs_m if clean_text(l)]) or "-"
         str_loc_h = ", ".join([l for l in locs_h if clean_text(l)]) or "-"
 
-        pesan += f"*{nama_barang}*\n"
+        # Tampilkan Nama + Batch
+        pesan += f"*{nama_barang} {batch_info}*\n"
         pesan += f"Mat: {mat_id} {spec_text}\n"
         pesan += f"Mining : {int(m_qty)} | Hauling : {int(h_qty)}\n"
         pesan += f"({str_loc_m} | {str_loc_h})\n\n"
-        
-        ditampilkan += 1
-        if ditampilkan >= 7: break
+    
+    # --- UPDATE: INFO SISA ITEM ---
+    sisa_item = total_items - end_idx
+    if sisa_item > 0:
+        pesan += f"👇 Masih ada sisa {sisa_item} item lagi.\n"
+        pesan += "Ketik *Lagi* atau *Next* untuk melihat.\n"
         
     pesan += f"🕒 {waktu_update_data}"
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN DEBUG MODE V2"
+def home(): return "LADEN V6 (SMART SEARCH + BATCH) READY"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
-    print(f"[DEBUG] Masuk: {json.dumps(data)}", file=sys.stdout, flush=True) 
+    print(f"[DEBUG] Masuk: {json.dumps(data)}", file=sys.stdout, flush=True)
 
     message = data.get('message') or data.get('pesan') 
     target_reply = data.get('pengirim') or data.get('id') or data.get('sender')
-    
+    sender_id = target_reply 
+
     if message:
-        msg_lower = message.lower()
-        trigger_found = False
-        keyword = ""
+        msg_lower = message.lower().strip()
         
         intro_keys = ["siapa", "intro", "kenalan"]
         if ("laden" in msg_lower) and any(k in msg_lower for k in intro_keys):
@@ -219,6 +261,22 @@ def webhook():
              requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": intro_msg})
              return jsonify({"status": "ok"}), 200
 
+        next_triggers = ["lagi", "next", "lanjut", "berikutnya", "more"]
+        if msg_lower in next_triggers:
+            if sender_id in USER_SESSIONS:
+                session = USER_SESSIONS[sender_id]
+                keyword = session['keyword']
+                next_page = session['page'] + 1
+                USER_SESSIONS[sender_id]['page'] = next_page
+                jawaban = cari_stok(keyword, page=next_page)
+                requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": jawaban})
+                return jsonify({"status": "ok"}), 200
+            else:
+                requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "⚠️ Belum ada pencarian sebelumnya, Pak."})
+                return jsonify({"status": "ok"}), 200
+
+        trigger_found = False
+        keyword = ""
         for trig in TRIGGERS_LADEN:
             if trig in msg_lower:
                 keyword = msg_lower.replace(trig, "").replace("stok", "").strip()
@@ -226,15 +284,14 @@ def webhook():
                 break
         
         if trigger_found and keyword:
-            jawaban = cari_stok(keyword)
-            # --- UPDATE: PRINT HASIL KIRIM FONNTE ---
-            resp = requests.post(
+            USER_SESSIONS[sender_id] = {'keyword': keyword, 'page': 0}
+            jawaban = cari_stok(keyword, page=0)
+            requests.post(
                 "https://api.fonnte.com/send", 
                 headers={"Authorization": FONNTE_TOKEN},
                 data={"target": target_reply, "message": jawaban}
             )
-            print(f"[DEBUG] Fonnte Jawab: {resp.text}", file=sys.stdout, flush=True)
-            
+
     return jsonify({"status": "ok"}), 200
 
 if __name__ == '__main__':
