@@ -14,7 +14,7 @@ app = Flask(__name__)
 # --- CONFIG ---
 FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN") 
 SHEET_ID = "1GMQ15xaMpJokmyNeckO6PRxtajiRV4yHB1U0wirRcGU"
-MY_BOT_NUMBER = "6282310355257" # Nomor WA Bot (Tanpa + atau 0)
+MY_BOT_NUMBER = "6282310355257" 
 
 # --- GLOBAL MEMORY ---
 CACHE_DATA = []      
@@ -228,7 +228,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V8 (TAG SUPPORT) READY"
+def home(): return "LADEN V9 (UNIVERSAL TAG) READY"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -242,17 +242,31 @@ def webhook():
     if message:
         msg_lower = message.lower().strip()
         
-        # --- LOGIKA TRIGGER BARU (TAG MENTION) ---
+        # --- LOGIKA TRIGGER V.9 (UNIVERSAL) ---
         trigger_found = False
         keyword = ""
 
-        # 1. Cek jika di-tag (@62823...)
-        if f"@{MY_BOT_NUMBER}" in message: # Cek pesan mentah (bukan lower) untuk keamanan
-            # Hapus tag dari pesan (misal "@62823... baut") jadi ("baut")
-            keyword = re.sub(f"@{MY_BOT_NUMBER}", "", message).strip()
-            trigger_found = True
-        
-        # 2. Cek Trigger Kata Kunci ("Tanya laden")
+        # 1. CEK TAG (@) - Paling Kuat
+        # Jika pesan dimulai dengan @ (apapun itu: @Laden, @Bot, @Admin, @628..)
+        if msg_lower.startswith("@"):
+            parts = msg_lower.split(" ", 1) # Pisahkan kata pertama (@tag) dengan sisanya
+            if len(parts) > 1:
+                keyword = parts[1].strip() # Ambil sisanya sebagai keyword
+                trigger_found = True
+            else:
+                # Cuma ngetik tag doang tanpa keyword
+                requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "👋 Dalem Pak? Mau cari stok apa? Ketik barangnya setelah tag ya."})
+                return jsonify({"status": "ok"}), 200
+
+        # 2. CEK NAMA PANGGILAN (LADEN)
+        # Jika pesan dimulai dengan kata "laden" (tanpa @ dan tanpa Tanya)
+        elif msg_lower.startswith("laden") or msg_lower.startswith("bot"):
+            parts = msg_lower.split(" ", 1)
+            if len(parts) > 1:
+                keyword = parts[1].strip()
+                trigger_found = True
+
+        # 3. CEK TRIGGER STANDAR ("Tanya laden")
         if not trigger_found:
             for trig in TRIGGERS_LADEN:
                 if trig in msg_lower:
@@ -260,17 +274,17 @@ def webhook():
                     trigger_found = True
                     break
 
-        # --- LOGIKA RESPONSE ---
-
-        # Cek Intro (Hanya jika di-mention atau pakai trigger)
+        # --- EKSEKUSI ---
+        
+        # Cek Intro (Hanya jika dipanggil)
         if trigger_found:
             intro_keys = ["siapa", "intro", "kenalan"]
             if any(k in msg_lower for k in intro_keys):
-                 intro_msg = "🤝 *Salam Kenal, Saya LADEN*\nSiap melayani cek stok 24 Jam.\nKetik *Tanya Den [Barang]* atau Tag saya."
+                 intro_msg = "🤝 *Salam Kenal, Saya LADEN*\nSiap melayani cek stok 24 Jam.\nCukup Tag saya diikuti nama barang."
                  requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": intro_msg})
                  return jsonify({"status": "ok"}), 200
 
-        # Cek Next/Lagi (Tidak perlu trigger tag, karena user sedang berdialog)
+        # Cek Next/Lagi
         next_triggers = ["lagi", "next", "lanjut", "berikutnya", "more"]
         if msg_lower in next_triggers:
             if sender_id in USER_SESSIONS:
@@ -282,7 +296,7 @@ def webhook():
                 requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": jawaban})
                 return jsonify({"status": "ok"}), 200
             
-        # Eksekusi Pencarian
+        # Cari Stok
         if trigger_found and keyword:
             USER_SESSIONS[sender_id] = {'keyword': keyword, 'page': 0}
             jawaban = cari_stok(keyword, page=0)
