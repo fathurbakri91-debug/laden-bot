@@ -14,6 +14,7 @@ app = Flask(__name__)
 # --- CONFIG ---
 FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN") 
 SHEET_ID = "1GMQ15xaMpJokmyNeckO6PRxtajiRV4yHB1U0wirRcGU"
+MY_BOT_NUMBER = "6282310355257" # Nomor WA Bot (Tanpa + atau 0)
 
 # --- GLOBAL MEMORY ---
 CACHE_DATA = []      
@@ -63,14 +64,9 @@ def clean_text(text):
     return t
 
 def normalize_pn(text):
-    """
-    LOGIKA MATA DEWA:
-    1. Hapus spasi & tanda baca ( - . _ )
-    2. Ubah Huruf 'o' menjadi Angka '0' (Supaya FG-160PW & FG-16OPW dianggap sama)
-    """
     t = str(text).lower()
-    t = re.sub(r'[^a-z0-9]', '', t) # Hapus simbol aneh
-    t = t.replace('o', '0')         # Anggap semua 'o' adalah '0'
+    t = re.sub(r'[^a-z0-9]', '', t) 
+    t = t.replace('o', '0')         
     return t
 
 def get_data_lightweight():
@@ -143,12 +139,10 @@ def cari_stok(raw_keyword, page=0):
     keyword_search = " ".join(kata_baru)
     keywords_split = keyword_search.split()
     
-    # Keyword Normal (Mata Dewa: Tanpa spasi & O jadi 0)
     keyword_pn_clean = normalize_pn(keyword_search)
 
     hasil = []
     for item in data:
-        # 1. Cek Deskripsi (Logic Biasa)
         match_desc = True
         teks_desc = item['desc'].lower()
         for k in keywords_split:
@@ -156,8 +150,6 @@ def cari_stok(raw_keyword, page=0):
                 match_desc = False
                 break
         
-        # 2. Cek Part Number (Logic Mata Dewa)
-        # FG-160PW (User) vs FG-16OPW (Excel) -> Keduanya jadi fg160pw -> MATCH!
         match_mat = False
         if keyword_pn_clean in normalize_pn(item['mat']):
             match_mat = True
@@ -166,7 +158,6 @@ def cari_stok(raw_keyword, page=0):
             hasil.append(item)
 
     pesan_koreksi = ""
-    # Auto Correct
     if not hasil and page == 0:
         all_names = list(set([d['desc'] for d in data]))
         mirip = difflib.get_close_matches(keyword_search.upper(), all_names, n=1, cutoff=0.5)
@@ -177,7 +168,6 @@ def cari_stok(raw_keyword, page=0):
 
     if not hasil: return f"🙏 Stok *'{raw_keyword}'* boten wonten."
 
-    # --- PAGINATION ---
     unik_mat_list = []
     seen = set()
     for x in hasil:
@@ -195,7 +185,6 @@ def cari_stok(raw_keyword, page=0):
     end_idx = start_idx + ITEMS_PER_PAGE
     current_page_mats = unik_mat_list[start_idx:end_idx]
 
-    # --- BUILD MESSAGE ---
     pesan = f"🙏 *Laden jawab ya...*\n"
     if pesan_koreksi: pesan += pesan_koreksi
     else: pesan += f"Pencarian: {keyword_search.upper()} ({total_items} items)\n"
@@ -239,7 +228,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V7 (MATA DEWA O=0) READY"
+def home(): return "LADEN V8 (TAG SUPPORT) READY"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -253,34 +242,47 @@ def webhook():
     if message:
         msg_lower = message.lower().strip()
         
-        intro_keys = ["siapa", "intro", "kenalan"]
-        if ("laden" in msg_lower) and any(k in msg_lower for k in intro_keys):
-             intro_msg = "🤝 *Salam Kenal, Saya LADEN*\nSiap melayani cek stok 24 Jam.\nKetik *Tanya Den [Barang]*"
-             requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": intro_msg})
-             return jsonify({"status": "ok"}), 200
+        # --- LOGIKA TRIGGER BARU (TAG MENTION) ---
+        trigger_found = False
+        keyword = ""
 
+        # 1. Cek jika di-tag (@62823...)
+        if f"@{MY_BOT_NUMBER}" in message: # Cek pesan mentah (bukan lower) untuk keamanan
+            # Hapus tag dari pesan (misal "@62823... baut") jadi ("baut")
+            keyword = re.sub(f"@{MY_BOT_NUMBER}", "", message).strip()
+            trigger_found = True
+        
+        # 2. Cek Trigger Kata Kunci ("Tanya laden")
+        if not trigger_found:
+            for trig in TRIGGERS_LADEN:
+                if trig in msg_lower:
+                    keyword = msg_lower.replace(trig, "").replace("stok", "").strip()
+                    trigger_found = True
+                    break
+
+        # --- LOGIKA RESPONSE ---
+
+        # Cek Intro (Hanya jika di-mention atau pakai trigger)
+        if trigger_found:
+            intro_keys = ["siapa", "intro", "kenalan"]
+            if any(k in msg_lower for k in intro_keys):
+                 intro_msg = "🤝 *Salam Kenal, Saya LADEN*\nSiap melayani cek stok 24 Jam.\nKetik *Tanya Den [Barang]* atau Tag saya."
+                 requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": intro_msg})
+                 return jsonify({"status": "ok"}), 200
+
+        # Cek Next/Lagi (Tidak perlu trigger tag, karena user sedang berdialog)
         next_triggers = ["lagi", "next", "lanjut", "berikutnya", "more"]
         if msg_lower in next_triggers:
             if sender_id in USER_SESSIONS:
                 session = USER_SESSIONS[sender_id]
-                keyword = session['keyword']
+                keyword_sess = session['keyword']
                 next_page = session['page'] + 1
                 USER_SESSIONS[sender_id]['page'] = next_page
-                jawaban = cari_stok(keyword, page=next_page)
+                jawaban = cari_stok(keyword_sess, page=next_page)
                 requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": jawaban})
                 return jsonify({"status": "ok"}), 200
-            else:
-                requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "⚠️ Belum ada pencarian sebelumnya, Pak."})
-                return jsonify({"status": "ok"}), 200
-
-        trigger_found = False
-        keyword = ""
-        for trig in TRIGGERS_LADEN:
-            if trig in msg_lower:
-                keyword = msg_lower.replace(trig, "").replace("stok", "").strip()
-                trigger_found = True
-                break
-        
+            
+        # Eksekusi Pencarian
         if trigger_found and keyword:
             USER_SESSIONS[sender_id] = {'keyword': keyword, 'page': 0}
             jawaban = cari_stok(keyword, page=0)
