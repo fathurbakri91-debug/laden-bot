@@ -22,8 +22,9 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR ---
+# --- KAMUS PINTAR (UPDATE V11) ---
 KAMUS_SINONIM = {
+    # Istilah Umum
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
     "sok": "shock", "sox": "shock",
@@ -36,13 +37,21 @@ KAMUS_SINONIM = {
     "aki": "battery", "accu": "battery",
     "baut": "bolt", "mur": "nut", 
     "laher": "bearing", "klem": "clamp", 
-    "oring": "o-ring", "o ring": "o-ring"
+    "oring": "o-ring", "o ring": "o-ring",
+    
+    # --- UPDATE BARU (BAHASA PROYEK) ---
+    "pipa": "pipe", "paralon": "pipe",
+    "siku": "elbow", "knie": "elbow", "elbo": "elbow",
+    "keran": "valve", "kran": "valve", "balp": "valve",
+    "sambungan": "fitting", "konektor": "connector",
+    "kabel": "cable",
+    "lampu": "lamp", "bohlam": "bulb",
+    "las": "welding", "kawat": "wire",
+    "sarung": "gloves", "tangan": "gloves", # Biar 'sarung tangan' match 'gloves' (opsional)
+    "inci": "inch", "inchi": "inch"
 }
 
 TRIGGERS_LADEN = ["tanya laden", "#tanyaladen", "tanya den", "#tanyaden", "cek laden", "cek den"]
-
-# --- DAFTAR KATA SAMPAH (STOP WORDS) ---
-# Kata-kata ini akan DIBUANG sebelum pencarian dimulai
 STOP_WORDS = ["stok", "stock", "cek", "cari", "tanya", "ada", "gak", "nggak", "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat"]
 
 def log(message):
@@ -74,13 +83,9 @@ def normalize_pn(text):
     return t
 
 def remove_stop_words(text):
-    """Membuang kata sampah (stok, cek, dll) dari keyword"""
     words = text.split()
-    # Hanya ambil kata yang BUKAN stop words
     filtered = [w for w in words if w.lower() not in STOP_WORDS]
-    # Jika setelah dibuang habis (misal user cuma ketik "cek stok"), kembalikan aslinya
-    if not filtered:
-        return text
+    if not filtered: return text
     return " ".join(filtered)
 
 def get_data_lightweight():
@@ -147,13 +152,11 @@ def cari_stok(raw_keyword, page=0):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
 
-    # 1. BERSIHKAN KEYWORD DARI KATA SAMPAH
     clean_keyword_step1 = remove_stop_words(raw_keyword.strip())
     
-    # 2. PROSES SINONIM & LOWERCASE
     clean_keyword = clean_keyword_step1.lower().strip()
     kata_kata = clean_keyword.split()
-    kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
+    kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata] # <-- DI SINI KUNCINYA (Pipa jadi Pipe)
     keyword_search = " ".join(kata_baru)
     keywords_split = keyword_search.split()
     
@@ -176,10 +179,8 @@ def cari_stok(raw_keyword, page=0):
             hasil.append(item)
 
     pesan_koreksi = ""
-    # Auto Correct
     if not hasil and page == 0:
         all_names = list(set([d['desc'] for d in data]))
-        # Cari match dari keyword yang SUDAH DIBERSIHKAN
         mirip = difflib.get_close_matches(keyword_search.upper(), all_names, n=1, cutoff=0.5)
         if mirip:
             tebakan = mirip[0]
@@ -248,7 +249,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V10 (SMART CLEANER) READY"
+def home(): return "LADEN V11 (KAMUS LENGKAP) READY"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -265,24 +266,21 @@ def webhook():
         trigger_found = False
         keyword = ""
 
-        # 1. CEK TAG (@) - Universal
         if msg_lower.startswith("@"):
             parts = msg_lower.split(" ", 1)
             if len(parts) > 1:
                 keyword = parts[1].strip()
                 trigger_found = True
             else:
-                requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "👋 Dalem Pak? Mau cari stok apa? Ketik barangnya setelah tag ya."})
+                requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "👋 Dalem Pak? Mau cari stok apa?"})
                 return jsonify({"status": "ok"}), 200
 
-        # 2. CEK NAMA PANGGILAN
         elif msg_lower.startswith("laden") or msg_lower.startswith("bot"):
             parts = msg_lower.split(" ", 1)
             if len(parts) > 1:
                 keyword = parts[1].strip()
                 trigger_found = True
 
-        # 3. CEK TRIGGER LAMA
         if not trigger_found:
             for trig in TRIGGERS_LADEN:
                 if trig in msg_lower:
@@ -293,7 +291,7 @@ def webhook():
         if trigger_found:
             intro_keys = ["siapa", "intro", "kenalan"]
             if any(k in msg_lower for k in intro_keys):
-                 intro_msg = "🤝 *Salam Kenal, Saya LADEN*\nSiap melayani cek stok 24 Jam.\nCukup Tag saya diikuti nama barang."
+                 intro_msg = "🤝 *Salam Kenal, Saya LADEN*\nSiap melayani cek stok 24 Jam."
                  requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": intro_msg})
                  return jsonify({"status": "ok"}), 200
 
