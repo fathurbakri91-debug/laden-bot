@@ -22,9 +22,8 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (V.23 UPDATE) ---
-# KITA HAPUS "sarung" & "tangan" DARI SINI
-# Agar "Sarung Tangan Kain" tetap dicari sebagai "Sarung Tangan Kain"
+# --- KAMUS PINTAR (V.24) ---
+# Baut tetap dipetakan ke Bolt agar pencarian umum "Cek Baut" ketemu "Hex Bolt"
 KAMUS_SINONIM = {
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
@@ -36,8 +35,6 @@ KAMUS_SINONIM = {
     "ban": "tire", "tyre": "tire", 
     "oli": "oil", "lube": "oil",
     "aki": "battery", "accu": "battery",
-    # "sarung": "gloves",  <-- HAPUS INI
-    # "tangan": "gloves",  <-- HAPUS INI
     "baut": "bolt", "mur": "nut", 
     "laher": "bearing", "klem": "clamp", 
     "oring": "o-ring", "o ring": "o-ring",
@@ -51,6 +48,7 @@ KAMUS_SINONIM = {
     "inci": "inch", "inchi": "inch",
     "cyl": "cylinder", "silinder": "cylinder",
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
+    # Sarung & Tangan SUDAH DIHAPUS (Aman untuk Sarung Tangan Kain)
 }
 
 # --- KONFIGURASI FILTER KATA ---
@@ -68,15 +66,16 @@ BLACKLIST_WORDS = [
     "absen", "lokasi", "posisi", "cuaca" 
 ]
 
+# --- V.24 STOP WORDS MURNI (HAPUS 'BAUT' DARI SINI) ---
 STOP_WORDS = [
     "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", 
     "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", 
     "kah", "ya", "bisa", "pak", "mas", "bang", "bu", "om", "lek", 
     "bantu", "mohon", "coba", "tolongin",
-    "baut", # Hybrid Logic
     "laden", "bot", "den", "min", "admin", "beta", "tes" 
 ]
 
+# --- KATA GENERIK (HANYA DIBUANG JIKA ADA ANGKA) ---
 GENERIC_ITEMS = ["baut", "bolt", "mur", "nut", "screw", "washer", "ring"]
 
 def log(message):
@@ -108,8 +107,11 @@ def normalize_pn(text):
     return t
 
 def smart_clean_keyword(text):
+    # 1. Hapus Tanda Baca & Tag ID
     text_clean = text.replace("?", "").replace("!", "").replace(",", "").replace(".", " ")
     text_clean = re.sub(r'@[a-zA-Z0-9]+', '', text_clean)
+
+    # 2. Cek apakah ada ANGKA
     has_digit = any(char.isdigit() for char in text_clean)
     
     words = text_clean.split()
@@ -117,10 +119,18 @@ def smart_clean_keyword(text):
     
     for w in words:
         w_lower = w.lower()
+        
+        # Buang Sampah Murni (cek, stok, dll)
         if w_lower in STOP_WORDS: continue
+        
+        # --- LOGIKA V.24 ---
+        # Hanya buang kata GENERIC (baut) JIKA ada ANGKA di kalimat
+        # Jika tidak ada angka, "baut" JANGAN dibuang (agar bisa dicari)
         if has_digit and w_lower in GENERIC_ITEMS: continue
+        
         final_words.append(w)
         
+    # Fallback: Jika kosong, kembalikan kata aslinya (minus stop words)
     if not final_words:
         fallback = [w for w in words if w.lower() not in STOP_WORDS]
         return " ".join(fallback)
@@ -277,7 +287,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V23 (NO-TRANSLATE) RUNNING"
+def home(): return "LADEN V24 (SMART SELECTOR) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -294,7 +304,7 @@ def webhook():
         trigger_found = False
         keyword = ""
 
-        # --- LOGIKA V23 ---
+        # --- LOGIKA V24 ---
         
         is_direct_call = False
         if msg_lower.startswith("@"):
