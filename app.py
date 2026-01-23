@@ -14,7 +14,6 @@ app = Flask(__name__)
 # --- CONFIG ---
 FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN") 
 SHEET_ID = "1GMQ15xaMpJokmyNeckO6PRxtajiRV4yHB1U0wirRcGU"
-# Kata kunci untuk mengenali diri sendiri (Trigger VIP)
 MY_BOT_NAME_KEYWORDS = ["laden", "bot", "den", "min"] 
 
 # --- GLOBAL MEMORY ---
@@ -23,8 +22,7 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (V.20) ---
-# "baut": "bolt" DIKEMBALIKAN (Penting untuk pencarian umum)
+# --- KAMUS PINTAR ---
 KAMUS_SINONIM = {
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
@@ -52,7 +50,7 @@ KAMUS_SINONIM = {
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
 }
 
-# --- CONFIG FILTER V.20 ---
+# --- KONFIGURASI FILTER KATA ---
 
 TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
 UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"]
@@ -67,15 +65,15 @@ BLACKLIST_WORDS = [
     "absen", "lokasi", "posisi", "cuaca" 
 ]
 
-# Kata Sampah Murni (Selalu dibuang)
 STOP_WORDS = [
     "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", 
     "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", 
     "kah", "ya", "bisa", "pak", "mas", "bang", "bu", "om", "lek", 
-    "bantu", "mohon", "coba", "tolongin"
+    "bantu", "mohon", "coba", "tolongin",
+    "baut", # Hybrid Logic
+    "laden", "bot", "den", "min", "admin", "beta", "tes" 
 ]
 
-# Kata Generik (Dibuang JIKA ada angka di kalimat)
 GENERIC_ITEMS = ["baut", "bolt", "mur", "nut", "screw", "washer", "ring"]
 
 def log(message):
@@ -110,9 +108,11 @@ def smart_clean_keyword(text):
     # 1. Hapus Tanda Baca
     text_clean = text.replace("?", "").replace("!", "").replace(",", "").replace(".", " ")
     
-    # 2. Cek apakah ada ANGKA (Digit 0-9) di kata kunci?
-    # Contoh: "Baut M14" -> Ada angka 14 (True)
-    # Contoh: "Cek Baut" -> Tidak ada angka (False)
+    # 2. HAPUS TAG ID WHATSAPP (SOLUSI BUG V.22)
+    # Regex ini akan menghapus semua kata yang dimulai dengan @ diikuti angka/huruf
+    # Contoh: @252681633435682 akan hilang.
+    text_clean = re.sub(r'@[a-zA-Z0-9]+', '', text_clean)
+
     has_digit = any(char.isdigit() for char in text_clean)
     
     words = text_clean.split()
@@ -120,22 +120,11 @@ def smart_clean_keyword(text):
     
     for w in words:
         w_lower = w.lower()
-        
-        # Buang Stop Words Murni (stok, cek, dll)
-        if w_lower in STOP_WORDS:
-            continue
-            
-        # LOGIKA V.20: Hybrid Cleaning
-        # Jika kalimat mengandung ANGKA, buang kata generik (biar fokus ke ukuran)
-        # Jika TIDAK ada angka, kata generik (baut) JANGAN dibuang.
-        if has_digit and w_lower in GENERIC_ITEMS:
-            continue
-            
+        if w_lower in STOP_WORDS: continue
+        if has_digit and w_lower in GENERIC_ITEMS: continue
         final_words.append(w)
         
-    # Jika setelah dibersihkan malah habis (kosong), kembalikan aslinya (biar gak error)
     if not final_words:
-        # Fallback: Kembalikan kata benda saja (misal user cuma ketik "baut")
         fallback = [w for w in words if w.lower() not in STOP_WORDS]
         return " ".join(fallback)
         
@@ -203,9 +192,8 @@ def cari_stok(raw_keyword, page=0):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
 
-    # --- PAKAI LOGIKA V.20 ---
+    # --- PEMBERSIHAN ---
     clean_keyword_step1 = smart_clean_keyword(raw_keyword.strip())
-    
     clean_keyword = clean_keyword_step1.lower().strip()
     kata_kata = clean_keyword.split()
     kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
@@ -228,7 +216,6 @@ def cari_stok(raw_keyword, page=0):
             hasil.append(item)
 
     pesan_koreksi = ""
-    # Auto Correct Logic
     if not hasil and page == 0:
         all_names = list(set([d['desc'] for d in data]))
         mirip = difflib.get_close_matches(keyword_search.upper(), all_names, n=1, cutoff=0.7) 
@@ -294,7 +281,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V20 (HYBRID LOGIC) RUNNING"
+def home(): return "LADEN V22 (TAG CLEANER) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -311,7 +298,7 @@ def webhook():
         trigger_found = False
         keyword = ""
 
-        # --- LOGIKA V20 ---
+        # --- LOGIKA V22 ---
         
         # 1. CEK TAG LANGSUNG (VIP)
         is_direct_call = False
@@ -352,6 +339,7 @@ def webhook():
             is_operational = any(w in msg_lower for w in BLACKLIST_WORDS)
             
             if has_trigger_word and not is_operational:
+                # V.22 UPDATE: HAPUS TAG ID (@angka) DI SINI JUGA
                 clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', message).strip()
                 keyword = clean_msg
                 trigger_found = True
