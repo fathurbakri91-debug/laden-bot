@@ -14,8 +14,7 @@ app = Flask(__name__)
 # --- CONFIG ---
 FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN") 
 SHEET_ID = "1GMQ15xaMpJokmyNeckO6PRxtajiRV4yHB1U0wirRcGU"
-# Ambil nomor bot dari token fonnte (opsional) atau hardcode
-# Untuk akurasi 100%, bot akan membaca siapa yang di-mention oleh WhatsApp
+# Kata kunci untuk mengenali diri sendiri (Trigger VIP)
 MY_BOT_NAME_KEYWORDS = ["laden", "bot", "den", "min"] 
 
 # --- GLOBAL MEMORY ---
@@ -50,8 +49,21 @@ KAMUS_SINONIM = {
     "inci": "inch", "inchi": "inch"
 }
 
-TRIGGERS_LADEN = ["tanya laden", "#tanyaladen", "tanya den", "#tanyaden", "cek laden", "cek den"]
-STOP_WORDS = ["stok", "stock", "cek", "cari", "tanya", "ada", "gak", "nggak", "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat"]
+# --- KONFIGURASI FILTER KATA (THE BRAIN) ---
+
+# 1. Trigger Umum (Jika kata ini muncul, Bot SIAGA 1)
+UNIVERSAL_KEYWORDS = ["stok", "stock", "ready"]
+
+# 2. Blacklist Operasional (Jika kata ini muncul, Bot BATAL JAWAB walaupun ada kata stok)
+BLACKLIST_WORDS = [
+    "lambung", "cn", "sn", "hm", "km", "engine", 
+    "unit", "dt", "hd", "lv", "gd", "dozer", "grader", 
+    "mekanik", "driver", "operator", "breakdown", "rfu", "schedule", 
+    "service", "perbaikan", "laporan", "kondisi"
+]
+
+# 3. Kata Sampah (Dibuang saat pencarian)
+STOP_WORDS = ["stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", "kah", "ya", "bisa"]
 
 def log(message):
     print(f"[LOG] {message}", file=sys.stdout, flush=True)
@@ -90,7 +102,6 @@ def remove_stop_words(text):
 def get_data_lightweight():
     global CACHE_DATA, CACHE_TIMESTAMP
     now = datetime.now()
-    
     if CACHE_DATA and CACHE_TIMESTAMP and (now - CACHE_TIMESTAMP).total_seconds() < CACHE_DURATION:
         return CACHE_DATA
 
@@ -114,7 +125,6 @@ def get_data_lightweight():
         idx_batch = next((i for i, h in enumerate(headers) if "batch" in h), -1)
 
         if idx_desc == -1 or idx_qty == -1:
-            log("❌ Format Header Salah")
             return []
 
         clean_data = []
@@ -157,7 +167,6 @@ def cari_stok(raw_keyword, page=0):
     kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
     keyword_search = " ".join(kata_baru)
     keywords_split = keyword_search.split()
-    
     keyword_pn_clean = normalize_pn(keyword_search)
 
     hasil = []
@@ -168,11 +177,9 @@ def cari_stok(raw_keyword, page=0):
             if k not in teks_desc:
                 match_desc = False
                 break
-        
         match_mat = False
         if keyword_pn_clean in normalize_pn(item['mat']):
             match_mat = True
-            
         if match_desc or match_mat:
             hasil.append(item)
 
@@ -207,7 +214,6 @@ def cari_stok(raw_keyword, page=0):
     pesan = f"🙏 *Laden jawab ya...*\n"
     if pesan_koreksi: pesan += pesan_koreksi
     else: pesan += f"Pencarian: {keyword_search.upper()} ({total_items} items)\n"
-    
     pesan += f"📖 Halaman {page+1} dari {total_pages}\n"
     pesan += "━━━━━━━━━━━━━━━━━━\n"
     
@@ -221,13 +227,10 @@ def cari_stok(raw_keyword, page=0):
         items_same_mat = [x for x in hasil if x['mat'] == mat_id]
         first_item = items_same_mat[0]
         nama_barang = first_item['desc']
-        
         batch_info = f"({first_item['batch']})" if first_item['batch'] else ""
         spec_text = f"({first_item['spec']})" if first_item['spec'] else ""
-        
         m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
         h_qty = sum(x['qty'] for x in items_same_mat if '40AJ' in x['plant'].upper())
-        
         locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper())
         locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         str_loc_m = ", ".join([l for l in locs_m if clean_text(l)]) or "-"
@@ -242,12 +245,11 @@ def cari_stok(raw_keyword, page=0):
     if sisa_item > 0:
         pesan += f"👇 Masih ada sisa {sisa_item} item lagi.\n"
         pesan += "Ketik *Lagi* atau *Next* untuk melihat.\n"
-        
     pesan += f"🕒 {waktu_update_data}"
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V12 (TAG SELEKTIF) READY"
+def home(): return "LADEN V13 (CONTEXTUAL SMART FILTER) READY"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -264,53 +266,52 @@ def webhook():
         trigger_found = False
         keyword = ""
 
-        # --- LOGIKA V12: TAG SELEKTIF ---
-        # 1. Cek Apakah Pesan Dimulai dengan '@'
+        # --- LOGIKA TRIGGER V13 (Contextual) ---
+        
+        # 1. CEK TAG LANGSUNG (VIP)
+        # Jika user tag @Laden atau @628... maka WAJIB jawab (abaikan blacklist)
+        is_direct_call = False
         if msg_lower.startswith("@"):
             parts = msg_lower.split(" ", 1)
-            first_word = parts[0] # Contoh: "@laden", "@ladenbeta", "@pakbudi"
-            
-            # Cek apakah tag ini UNTUK SAYA?
-            # Caranya: Cek apakah di dalam tag ada kata "laden", "bot", atau nomor HP bot sendiri
-            is_for_me = False
-            
-            # Cek keyword nama
+            first_word = parts[0]
+            # Cek apakah tag untuk saya?
             for my_name in MY_BOT_NAME_KEYWORDS:
-                if my_name in first_word: # Misal: "@ladenbeta" mengandung "laden" -> OK
-                    is_for_me = True
-                    break
+                if my_name in first_word: is_direct_call = True
+            if "628" in first_word and len(first_word) > 10: is_direct_call = True
             
-            # Cek nomor HP (Format @628...)
-            if "628" in first_word and len(first_word) > 10:
-                # Anggap ini tag nomor HP, kita terima saja dulu (biar aman)
-                is_for_me = True
-
-            if is_for_me:
+            if is_direct_call:
                 if len(parts) > 1:
                     keyword = parts[1].strip()
                     trigger_found = True
                 else:
                     requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "👋 Dalem Pak? Mau cari stok apa?"})
                     return jsonify({"status": "ok"}), 200
-            else:
-                # Kalau tag bukan buat saya (misal @PakBudi), DIAM SAJA.
-                print(f"[DEBUG] Tag '{first_word}' bukan untuk bot. Diabaikan.", file=sys.stdout)
 
-        # 2. CEK NAMA PANGGILAN LANGSUNG (Tanpa @)
-        elif msg_lower.startswith("laden") or msg_lower.startswith("bot"):
+        # 2. CEK NAMA (VIP)
+        elif any(msg_lower.startswith(name) for name in MY_BOT_NAME_KEYWORDS):
+            is_direct_call = True
             parts = msg_lower.split(" ", 1)
             if len(parts) > 1:
                 keyword = parts[1].strip()
                 trigger_found = True
 
-        # 3. CEK TRIGGER LAMA
+        # 3. JALUR UMUM (AUTO-DETECT STOK)
+        # Jika tidak dipanggil nama, tapi ada kata "stok/ready" DAN tidak ada kata operasional
         if not trigger_found:
-            for trig in TRIGGERS_LADEN:
-                if trig in msg_lower:
-                    keyword = msg_lower.replace(trig, "").replace("stok", "").strip()
-                    trigger_found = True
-                    break
+            has_stock_word = any(w in msg_lower for w in UNIVERSAL_KEYWORDS)
+            is_operational = any(w in msg_lower for w in BLACKLIST_WORDS)
+            
+            if has_stock_word and not is_operational:
+                # Ambil seluruh pesan sebagai keyword (nanti dibersihkan remove_stop_words)
+                # Tapi kita harus bersihkan TAG ORANG LAIN dulu (misal @PakBudi)
+                clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', message).strip()
+                keyword = clean_msg
+                trigger_found = True
+                print("[DEBUG] Trigger Jalur Umum (Stok Detect)", file=sys.stdout)
 
+        # --- EKSEKUSI ---
+        
+        # Intro
         if trigger_found:
             intro_keys = ["siapa", "intro", "kenalan"]
             if any(k in msg_lower for k in intro_keys):
@@ -318,6 +319,7 @@ def webhook():
                  requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": intro_msg})
                  return jsonify({"status": "ok"}), 200
 
+        # Next Page
         next_triggers = ["lagi", "next", "lanjut", "berikutnya", "more"]
         if msg_lower in next_triggers:
             if sender_id in USER_SESSIONS:
@@ -329,6 +331,7 @@ def webhook():
                 requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": jawaban})
                 return jsonify({"status": "ok"}), 200
             
+        # Cari Stok
         if trigger_found and keyword:
             USER_SESSIONS[sender_id] = {'keyword': keyword, 'page': 0}
             jawaban = cari_stok(keyword, page=0)
