@@ -51,15 +51,11 @@ KAMUS_SINONIM = {
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
 }
 
-# --- KONFIGURASI FILTER KATA (THE BRAIN V17) ---
+# --- KONFIGURASI FILTER KATA (THE BRAIN V18) ---
 
-# 1. Trigger Lama (Support User Lama)
 TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
-
-# 2. Trigger Umum (AUTO DETECT) - Ditambah "CEK"
 UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"]
 
-# 3. Blacklist Operasional (Jika kata ini muncul, Bot DIAM)
 BLACKLIST_WORDS = [
     "lambung", "cn", "sn", "hm", "km", "engine", 
     "unit", "dt", "hd", "lv", "gd", "dozer", "grader", 
@@ -70,8 +66,6 @@ BLACKLIST_WORDS = [
     "absen", "lokasi", "posisi", "cuaca" 
 ]
 
-# 4. Kata Sampah (Dibuang agar pencarian bersih)
-# Ditambah: "bantu", "tolong", "mohon", "mas", "bang", "lek"
 STOP_WORDS = [
     "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", 
     "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", 
@@ -108,8 +102,14 @@ def normalize_pn(text):
     return t
 
 def remove_stop_words(text):
-    words = text.split()
+    # --- UPGRADE V18: Hapus Tanda Baca yang Nempel ---
+    # Kita ganti ? ! , dengan spasi kosong agar tidak dianggap bagian kata
+    text_clean = text.replace("?", "").replace("!", "").replace(",", "").replace(".", " ") 
+    # Note: Titik diganti spasi biar part number tidak rusak, tapi kalau di akhir kalimat aman
+    
+    words = text_clean.split()
     filtered = [w for w in words if w.lower() not in STOP_WORDS]
+    
     if not filtered: return text
     return " ".join(filtered)
 
@@ -264,7 +264,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V17 (SMART IGNORE) RUNNING"
+def home(): return "LADEN V18 (PUNCTUATION CLEANER) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -281,7 +281,7 @@ def webhook():
         trigger_found = False
         keyword = ""
 
-        # --- LOGIKA TRIGGER V17 (MAXIMUM FLEXIBILITY) ---
+        # --- LOGIKA V18 ---
         
         # 1. CEK TAG LANGSUNG (VIP)
         is_direct_call = False
@@ -308,7 +308,7 @@ def webhook():
                 keyword = parts[1].strip()
                 trigger_found = True
 
-        # 3. CEK TRIGGER LAMA (Tanya Laden)
+        # 3. CEK TRIGGER LAMA
         if not trigger_found:
             for trig in TRIGGERS_LAMA:
                 if trig in msg_lower:
@@ -316,14 +316,12 @@ def webhook():
                     trigger_found = True
                     break
 
-        # 4. JALUR UMUM (AUTO-DETECT: STOK / CEK)
-        # Respon jika tag orang lain tapi ada kata "stok/cek"
+        # 4. JALUR UMUM (AUTO-DETECT)
         if not trigger_found:
-            has_trigger_word = any(w in msg_lower for w in UNIVERSAL_KEYWORDS) # stok, stock, cek
+            has_trigger_word = any(w in msg_lower for w in UNIVERSAL_KEYWORDS)
             is_operational = any(w in msg_lower for w in BLACKLIST_WORDS)
             
             if has_trigger_word and not is_operational:
-                # Bersihkan tag orang lain (misal @Faiz)
                 clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', message).strip()
                 keyword = clean_msg
                 trigger_found = True
