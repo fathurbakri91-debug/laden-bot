@@ -51,24 +51,33 @@ KAMUS_SINONIM = {
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
 }
 
-# --- KONFIGURASI FILTER KATA (THE BRAIN V15) ---
+# --- KONFIGURASI FILTER KATA (THE BRAIN V17) ---
 
-# 1. Trigger Umum (HANYA STOK/STOCK) - "Ready" DIHAPUS MUTLAK
-UNIVERSAL_KEYWORDS = ["stok", "stock"]
+# 1. Trigger Lama (Support User Lama)
+TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
 
-# 2. Blacklist Operasional (Jika kata ini muncul, Bot DIAM)
-# Menambahkan kata-kata percakapan bos/koordinasi
+# 2. Trigger Umum (AUTO DETECT) - Ditambah "CEK"
+UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"]
+
+# 3. Blacklist Operasional (Jika kata ini muncul, Bot DIAM)
 BLACKLIST_WORDS = [
     "lambung", "cn", "sn", "hm", "km", "engine", 
     "unit", "dt", "hd", "lv", "gd", "dozer", "grader", 
     "mekanik", "driver", "operator", "breakdown", "rfu", "schedule", 
     "service", "perbaikan", "laporan", "kondisi", "wo", "pr", "po",
     "siap", "standby", "monitor", "copy", "rogger", "86",
-    "update", "urung", "belum", "lagi", "merapat", "info", "progress", "nanya"
+    "update", "urung", "belum", "lagi", "merapat", "info", "progress", "nanya",
+    "absen", "lokasi", "posisi", "cuaca" 
 ]
 
-# 3. Kata Sampah (Dibuang saat pencarian)
-STOP_WORDS = ["stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", "kah", "ya", "bisa", "pak", "mas", "bang", "bu"]
+# 4. Kata Sampah (Dibuang agar pencarian bersih)
+# Ditambah: "bantu", "tolong", "mohon", "mas", "bang", "lek"
+STOP_WORDS = [
+    "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", 
+    "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", 
+    "kah", "ya", "bisa", "pak", "mas", "bang", "bu", "om", "lek", 
+    "bantu", "mohon", "coba", "tolongin"
+]
 
 def log(message):
     print(f"[LOG] {message}", file=sys.stdout, flush=True)
@@ -189,11 +198,9 @@ def cari_stok(raw_keyword, page=0):
             hasil.append(item)
 
     pesan_koreksi = ""
-    # Auto Correct Logic - DIPERKETAT (Cutoff 0.7)
+    # Auto Correct Logic
     if not hasil and page == 0:
         all_names = list(set([d['desc'] for d in data]))
-        # Cutoff 0.7 artinya harus 70% mirip baru ditebak. 
-        # Fuse vs Fuel itu < 50% mirip, jadi tidak akan ditebak lagi.
         mirip = difflib.get_close_matches(keyword_search.upper(), all_names, n=1, cutoff=0.7) 
         if mirip:
             tebakan = mirip[0]
@@ -257,7 +264,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V15 (PROD READY) RUNNING"
+def home(): return "LADEN V17 (SMART IGNORE) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -274,11 +281,10 @@ def webhook():
         trigger_found = False
         keyword = ""
 
-        # --- LOGIKA TRIGGER V15 (Auto Filter PRO) ---
+        # --- LOGIKA TRIGGER V17 (MAXIMUM FLEXIBILITY) ---
         
-        # 1. CEK TAG LANGSUNG (VIP) - Tag Bot / Panggil Nama = WAJIB JAWAB
+        # 1. CEK TAG LANGSUNG (VIP)
         is_direct_call = False
-        # Logika Tag
         if msg_lower.startswith("@"):
             parts = msg_lower.split(" ", 1)
             first_word = parts[0]
@@ -294,7 +300,7 @@ def webhook():
                     requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "👋 Dalem Pak? Mau cari stok apa?"})
                     return jsonify({"status": "ok"}), 200
 
-        # Logika Panggil Nama (Tanpa Tag)
+        # 2. CEK NAMA (VIP)
         elif any(msg_lower.startswith(name) for name in MY_BOT_NAME_KEYWORDS):
             is_direct_call = True
             parts = msg_lower.split(" ", 1)
@@ -302,17 +308,26 @@ def webhook():
                 keyword = parts[1].strip()
                 trigger_found = True
 
-        # 2. JALUR UMUM (AUTO-DETECT) - Filter Ketat
+        # 3. CEK TRIGGER LAMA (Tanya Laden)
         if not trigger_found:
-            has_stock_word = any(w in msg_lower for w in UNIVERSAL_KEYWORDS) # Cuma STOK/STOCK
-            is_operational = any(w in msg_lower for w in BLACKLIST_WORDS) # Cek Blacklist
+            for trig in TRIGGERS_LAMA:
+                if trig in msg_lower:
+                    keyword = msg_lower.replace(trig, "").strip()
+                    trigger_found = True
+                    break
+
+        # 4. JALUR UMUM (AUTO-DETECT: STOK / CEK)
+        # Respon jika tag orang lain tapi ada kata "stok/cek"
+        if not trigger_found:
+            has_trigger_word = any(w in msg_lower for w in UNIVERSAL_KEYWORDS) # stok, stock, cek
+            is_operational = any(w in msg_lower for w in BLACKLIST_WORDS)
             
-            if has_stock_word and not is_operational:
-                # Bersihkan tag orang lain (misal @PakBudi)
+            if has_trigger_word and not is_operational:
+                # Bersihkan tag orang lain (misal @Faiz)
                 clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', message).strip()
                 keyword = clean_msg
                 trigger_found = True
-                print("[DEBUG] Trigger Jalur Umum (Stok Detect)", file=sys.stdout)
+                print("[DEBUG] Trigger Jalur Umum (Auto Detect)", file=sys.stdout)
 
         # --- EKSEKUSI ---
         
