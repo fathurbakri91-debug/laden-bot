@@ -63,8 +63,15 @@ def clean_text(text):
     return t
 
 def normalize_pn(text):
-    """Menghapus spasi dan tanda baca untuk pencarian Part Number cerdas"""
-    return re.sub(r'[^a-zA-Z0-9]', '', str(text).lower())
+    """
+    LOGIKA MATA DEWA:
+    1. Hapus spasi & tanda baca ( - . _ )
+    2. Ubah Huruf 'o' menjadi Angka '0' (Supaya FG-160PW & FG-16OPW dianggap sama)
+    """
+    t = str(text).lower()
+    t = re.sub(r'[^a-z0-9]', '', t) # Hapus simbol aneh
+    t = t.replace('o', '0')         # Anggap semua 'o' adalah '0'
+    return t
 
 def get_data_lightweight():
     global CACHE_DATA, CACHE_TIMESTAMP
@@ -90,7 +97,6 @@ def get_data_lightweight():
         idx_bin = next((i for i, h in enumerate(headers) if "bin" in h), -1)
         idx_spec = next((i for i, h in enumerate(headers) if "procurement" in h), -1)
         idx_upd = next((i for i, h in enumerate(headers) if "update" in h), -1)
-        # Cari Kolom Batch
         idx_batch = next((i for i, h in enumerate(headers) if "batch" in h), -1)
 
         if idx_desc == -1 or idx_qty == -1:
@@ -137,12 +143,12 @@ def cari_stok(raw_keyword, page=0):
     keyword_search = " ".join(kata_baru)
     keywords_split = keyword_search.split()
     
-    # Keyword Normal (tanpa spasi/-) untuk Part Number
+    # Keyword Normal (Mata Dewa: Tanpa spasi & O jadi 0)
     keyword_pn_clean = normalize_pn(keyword_search)
 
     hasil = []
     for item in data:
-        # 1. Cek Deskripsi (Logic Biasa per kata)
+        # 1. Cek Deskripsi (Logic Biasa)
         match_desc = True
         teks_desc = item['desc'].lower()
         for k in keywords_split:
@@ -150,18 +156,17 @@ def cari_stok(raw_keyword, page=0):
                 match_desc = False
                 break
         
-        # 2. Cek Part Number (Logic Cerdas Anti-Strip)
-        # LCM-7 (di data LC-M7) -> lcm7 == lcm7 -> MATCH!
+        # 2. Cek Part Number (Logic Mata Dewa)
+        # FG-160PW (User) vs FG-16OPW (Excel) -> Keduanya jadi fg160pw -> MATCH!
         match_mat = False
         if keyword_pn_clean in normalize_pn(item['mat']):
             match_mat = True
             
-        # Gabungkan: Jika cocok deskripsi ATAU cocok part number
         if match_desc or match_mat:
             hasil.append(item)
 
     pesan_koreksi = ""
-    # Auto Correct jika kosong
+    # Auto Correct
     if not hasil and page == 0:
         all_names = list(set([d['desc'] for d in data]))
         mirip = difflib.get_close_matches(keyword_search.upper(), all_names, n=1, cutoff=0.5)
@@ -172,8 +177,7 @@ def cari_stok(raw_keyword, page=0):
 
     if not hasil: return f"🙏 Stok *'{raw_keyword}'* boten wonten."
 
-    # --- PAGINATION & GROUPING ---
-    # Kelompokkan Material Unik
+    # --- PAGINATION ---
     unik_mat_list = []
     seen = set()
     for x in hasil:
@@ -182,7 +186,7 @@ def cari_stok(raw_keyword, page=0):
             seen.add(x['mat'])
             
     total_items = len(unik_mat_list)
-    ITEMS_PER_PAGE = 10  # --- UPDATE: 10 ITEM PER HALAMAN ---
+    ITEMS_PER_PAGE = 10 
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     
     if page >= total_pages: return "⚠️ Sudah halaman terakhir, Pak."
@@ -210,11 +214,7 @@ def cari_stok(raw_keyword, page=0):
         first_item = items_same_mat[0]
         nama_barang = first_item['desc']
         
-        # --- UPDATE: BATCH DISPLAY ---
-        batch_info = ""
-        if first_item['batch']:
-            batch_info = f"({first_item['batch']})"
-        
+        batch_info = f"({first_item['batch']})" if first_item['batch'] else ""
         spec_text = f"({first_item['spec']})" if first_item['spec'] else ""
         
         m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
@@ -225,13 +225,11 @@ def cari_stok(raw_keyword, page=0):
         str_loc_m = ", ".join([l for l in locs_m if clean_text(l)]) or "-"
         str_loc_h = ", ".join([l for l in locs_h if clean_text(l)]) or "-"
 
-        # Tampilkan Nama + Batch
         pesan += f"*{nama_barang} {batch_info}*\n"
         pesan += f"Mat: {mat_id} {spec_text}\n"
         pesan += f"Mining : {int(m_qty)} | Hauling : {int(h_qty)}\n"
         pesan += f"({str_loc_m} | {str_loc_h})\n\n"
     
-    # --- UPDATE: INFO SISA ITEM ---
     sisa_item = total_items - end_idx
     if sisa_item > 0:
         pesan += f"👇 Masih ada sisa {sisa_item} item lagi.\n"
@@ -241,7 +239,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V6 (SMART SEARCH + BATCH) READY"
+def home(): return "LADEN V7 (MATA DEWA O=0) READY"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
