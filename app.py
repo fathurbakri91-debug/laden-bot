@@ -22,7 +22,9 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR ---
+# --- KAMUS PINTAR (V.23 UPDATE) ---
+# KITA HAPUS "sarung" & "tangan" DARI SINI
+# Agar "Sarung Tangan Kain" tetap dicari sebagai "Sarung Tangan Kain"
 KAMUS_SINONIM = {
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
@@ -34,6 +36,8 @@ KAMUS_SINONIM = {
     "ban": "tire", "tyre": "tire", 
     "oli": "oil", "lube": "oil",
     "aki": "battery", "accu": "battery",
+    # "sarung": "gloves",  <-- HAPUS INI
+    # "tangan": "gloves",  <-- HAPUS INI
     "baut": "bolt", "mur": "nut", 
     "laher": "bearing", "klem": "clamp", 
     "oring": "o-ring", "o ring": "o-ring",
@@ -44,7 +48,6 @@ KAMUS_SINONIM = {
     "kabel": "cable",
     "lampu": "lamp", "bohlam": "bulb",
     "las": "welding", "kawat": "wire",
-    "sarung": "gloves", "tangan": "gloves", 
     "inci": "inch", "inchi": "inch",
     "cyl": "cylinder", "silinder": "cylinder",
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
@@ -105,14 +108,8 @@ def normalize_pn(text):
     return t
 
 def smart_clean_keyword(text):
-    # 1. Hapus Tanda Baca
     text_clean = text.replace("?", "").replace("!", "").replace(",", "").replace(".", " ")
-    
-    # 2. HAPUS TAG ID WHATSAPP (SOLUSI BUG V.22)
-    # Regex ini akan menghapus semua kata yang dimulai dengan @ diikuti angka/huruf
-    # Contoh: @252681633435682 akan hilang.
     text_clean = re.sub(r'@[a-zA-Z0-9]+', '', text_clean)
-
     has_digit = any(char.isdigit() for char in text_clean)
     
     words = text_clean.split()
@@ -192,7 +189,6 @@ def cari_stok(raw_keyword, page=0):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
 
-    # --- PEMBERSIHAN ---
     clean_keyword_step1 = smart_clean_keyword(raw_keyword.strip())
     clean_keyword = clean_keyword_step1.lower().strip()
     kata_kata = clean_keyword.split()
@@ -281,7 +277,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V22 (TAG CLEANER) RUNNING"
+def home(): return "LADEN V23 (NO-TRANSLATE) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -298,9 +294,8 @@ def webhook():
         trigger_found = False
         keyword = ""
 
-        # --- LOGIKA V22 ---
+        # --- LOGIKA V23 ---
         
-        # 1. CEK TAG LANGSUNG (VIP)
         is_direct_call = False
         if msg_lower.startswith("@"):
             parts = msg_lower.split(" ", 1)
@@ -317,7 +312,6 @@ def webhook():
                     requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "👋 Dalem Pak? Mau cari stok apa?"})
                     return jsonify({"status": "ok"}), 200
 
-        # 2. CEK NAMA (VIP)
         elif any(msg_lower.startswith(name) for name in MY_BOT_NAME_KEYWORDS):
             is_direct_call = True
             parts = msg_lower.split(" ", 1)
@@ -325,7 +319,6 @@ def webhook():
                 keyword = parts[1].strip()
                 trigger_found = True
 
-        # 3. CEK TRIGGER LAMA
         if not trigger_found:
             for trig in TRIGGERS_LAMA:
                 if trig in msg_lower:
@@ -333,20 +326,16 @@ def webhook():
                     trigger_found = True
                     break
 
-        # 4. JALUR UMUM (AUTO-DETECT)
         if not trigger_found:
             has_trigger_word = any(w in msg_lower for w in UNIVERSAL_KEYWORDS)
             is_operational = any(w in msg_lower for w in BLACKLIST_WORDS)
             
             if has_trigger_word and not is_operational:
-                # V.22 UPDATE: HAPUS TAG ID (@angka) DI SINI JUGA
                 clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', message).strip()
                 keyword = clean_msg
                 trigger_found = True
                 print("[DEBUG] Trigger Jalur Umum (Auto Detect)", file=sys.stdout)
 
-        # --- EKSEKUSI ---
-        
         if trigger_found:
             intro_keys = ["siapa", "intro", "kenalan"]
             if any(k in msg_lower for k in intro_keys):
