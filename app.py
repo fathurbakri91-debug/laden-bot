@@ -41,6 +41,10 @@ KAMUS_SINONIM = {
 
 TRIGGERS_LADEN = ["tanya laden", "#tanyaladen", "tanya den", "#tanyaden", "cek laden", "cek den"]
 
+# --- DAFTAR KATA SAMPAH (STOP WORDS) ---
+# Kata-kata ini akan DIBUANG sebelum pencarian dimulai
+STOP_WORDS = ["stok", "stock", "cek", "cari", "tanya", "ada", "gak", "nggak", "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat"]
+
 def log(message):
     print(f"[LOG] {message}", file=sys.stdout, flush=True)
 
@@ -68,6 +72,16 @@ def normalize_pn(text):
     t = re.sub(r'[^a-z0-9]', '', t) 
     t = t.replace('o', '0')         
     return t
+
+def remove_stop_words(text):
+    """Membuang kata sampah (stok, cek, dll) dari keyword"""
+    words = text.split()
+    # Hanya ambil kata yang BUKAN stop words
+    filtered = [w for w in words if w.lower() not in STOP_WORDS]
+    # Jika setelah dibuang habis (misal user cuma ketik "cek stok"), kembalikan aslinya
+    if not filtered:
+        return text
+    return " ".join(filtered)
 
 def get_data_lightweight():
     global CACHE_DATA, CACHE_TIMESTAMP
@@ -133,7 +147,11 @@ def cari_stok(raw_keyword, page=0):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
 
-    clean_keyword = raw_keyword.lower().strip()
+    # 1. BERSIHKAN KEYWORD DARI KATA SAMPAH
+    clean_keyword_step1 = remove_stop_words(raw_keyword.strip())
+    
+    # 2. PROSES SINONIM & LOWERCASE
+    clean_keyword = clean_keyword_step1.lower().strip()
     kata_kata = clean_keyword.split()
     kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
     keyword_search = " ".join(kata_baru)
@@ -158,15 +176,17 @@ def cari_stok(raw_keyword, page=0):
             hasil.append(item)
 
     pesan_koreksi = ""
+    # Auto Correct
     if not hasil and page == 0:
         all_names = list(set([d['desc'] for d in data]))
+        # Cari match dari keyword yang SUDAH DIBERSIHKAN
         mirip = difflib.get_close_matches(keyword_search.upper(), all_names, n=1, cutoff=0.5)
         if mirip:
             tebakan = mirip[0]
             pesan_koreksi = f"⚠️ _Mboten wonten. Maksud Bapak:_ *{tebakan}*?\n\n"
             hasil = [d for d in data if tebakan.lower() in d['desc'].lower()]
 
-    if not hasil: return f"🙏 Stok *'{raw_keyword}'* boten wonten."
+    if not hasil: return f"🙏 Stok *'{clean_keyword}'* boten wonten."
 
     unik_mat_list = []
     seen = set()
@@ -228,7 +248,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V9 (UNIVERSAL TAG) READY"
+def home(): return "LADEN V10 (SMART CLEANER) READY"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -242,31 +262,27 @@ def webhook():
     if message:
         msg_lower = message.lower().strip()
         
-        # --- LOGIKA TRIGGER V.9 (UNIVERSAL) ---
         trigger_found = False
         keyword = ""
 
-        # 1. CEK TAG (@) - Paling Kuat
-        # Jika pesan dimulai dengan @ (apapun itu: @Laden, @Bot, @Admin, @628..)
+        # 1. CEK TAG (@) - Universal
         if msg_lower.startswith("@"):
-            parts = msg_lower.split(" ", 1) # Pisahkan kata pertama (@tag) dengan sisanya
+            parts = msg_lower.split(" ", 1)
             if len(parts) > 1:
-                keyword = parts[1].strip() # Ambil sisanya sebagai keyword
+                keyword = parts[1].strip()
                 trigger_found = True
             else:
-                # Cuma ngetik tag doang tanpa keyword
                 requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "👋 Dalem Pak? Mau cari stok apa? Ketik barangnya setelah tag ya."})
                 return jsonify({"status": "ok"}), 200
 
-        # 2. CEK NAMA PANGGILAN (LADEN)
-        # Jika pesan dimulai dengan kata "laden" (tanpa @ dan tanpa Tanya)
+        # 2. CEK NAMA PANGGILAN
         elif msg_lower.startswith("laden") or msg_lower.startswith("bot"):
             parts = msg_lower.split(" ", 1)
             if len(parts) > 1:
                 keyword = parts[1].strip()
                 trigger_found = True
 
-        # 3. CEK TRIGGER STANDAR ("Tanya laden")
+        # 3. CEK TRIGGER LAMA
         if not trigger_found:
             for trig in TRIGGERS_LADEN:
                 if trig in msg_lower:
@@ -274,9 +290,6 @@ def webhook():
                     trigger_found = True
                     break
 
-        # --- EKSEKUSI ---
-        
-        # Cek Intro (Hanya jika dipanggil)
         if trigger_found:
             intro_keys = ["siapa", "intro", "kenalan"]
             if any(k in msg_lower for k in intro_keys):
@@ -284,7 +297,6 @@ def webhook():
                  requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": intro_msg})
                  return jsonify({"status": "ok"}), 200
 
-        # Cek Next/Lagi
         next_triggers = ["lagi", "next", "lanjut", "berikutnya", "more"]
         if msg_lower in next_triggers:
             if sender_id in USER_SESSIONS:
@@ -296,7 +308,6 @@ def webhook():
                 requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": jawaban})
                 return jsonify({"status": "ok"}), 200
             
-        # Cari Stok
         if trigger_found and keyword:
             USER_SESSIONS[sender_id] = {'keyword': keyword, 'page': 0}
             jawaban = cari_stok(keyword, page=0)
