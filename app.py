@@ -23,7 +23,8 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR ---
+# --- KAMUS PINTAR (V.20) ---
+# "baut": "bolt" DIKEMBALIKAN (Penting untuk pencarian umum)
 KAMUS_SINONIM = {
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
@@ -51,7 +52,7 @@ KAMUS_SINONIM = {
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
 }
 
-# --- KONFIGURASI FILTER KATA (THE BRAIN V18) ---
+# --- CONFIG FILTER V.20 ---
 
 TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
 UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"]
@@ -66,12 +67,16 @@ BLACKLIST_WORDS = [
     "absen", "lokasi", "posisi", "cuaca" 
 ]
 
+# Kata Sampah Murni (Selalu dibuang)
 STOP_WORDS = [
     "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", 
     "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", 
     "kah", "ya", "bisa", "pak", "mas", "bang", "bu", "om", "lek", 
     "bantu", "mohon", "coba", "tolongin"
 ]
+
+# Kata Generik (Dibuang JIKA ada angka di kalimat)
+GENERIC_ITEMS = ["baut", "bolt", "mur", "nut", "screw", "washer", "ring"]
 
 def log(message):
     print(f"[LOG] {message}", file=sys.stdout, flush=True)
@@ -101,17 +106,40 @@ def normalize_pn(text):
     t = t.replace('o', '0')         
     return t
 
-def remove_stop_words(text):
-    # --- UPGRADE V18: Hapus Tanda Baca yang Nempel ---
-    # Kita ganti ? ! , dengan spasi kosong agar tidak dianggap bagian kata
-    text_clean = text.replace("?", "").replace("!", "").replace(",", "").replace(".", " ") 
-    # Note: Titik diganti spasi biar part number tidak rusak, tapi kalau di akhir kalimat aman
+def smart_clean_keyword(text):
+    # 1. Hapus Tanda Baca
+    text_clean = text.replace("?", "").replace("!", "").replace(",", "").replace(".", " ")
+    
+    # 2. Cek apakah ada ANGKA (Digit 0-9) di kata kunci?
+    # Contoh: "Baut M14" -> Ada angka 14 (True)
+    # Contoh: "Cek Baut" -> Tidak ada angka (False)
+    has_digit = any(char.isdigit() for char in text_clean)
     
     words = text_clean.split()
-    filtered = [w for w in words if w.lower() not in STOP_WORDS]
+    final_words = []
     
-    if not filtered: return text
-    return " ".join(filtered)
+    for w in words:
+        w_lower = w.lower()
+        
+        # Buang Stop Words Murni (stok, cek, dll)
+        if w_lower in STOP_WORDS:
+            continue
+            
+        # LOGIKA V.20: Hybrid Cleaning
+        # Jika kalimat mengandung ANGKA, buang kata generik (biar fokus ke ukuran)
+        # Jika TIDAK ada angka, kata generik (baut) JANGAN dibuang.
+        if has_digit and w_lower in GENERIC_ITEMS:
+            continue
+            
+        final_words.append(w)
+        
+    # Jika setelah dibersihkan malah habis (kosong), kembalikan aslinya (biar gak error)
+    if not final_words:
+        # Fallback: Kembalikan kata benda saja (misal user cuma ketik "baut")
+        fallback = [w for w in words if w.lower() not in STOP_WORDS]
+        return " ".join(fallback)
+        
+    return " ".join(final_words)
 
 def get_data_lightweight():
     global CACHE_DATA, CACHE_TIMESTAMP
@@ -175,7 +203,9 @@ def cari_stok(raw_keyword, page=0):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
 
-    clean_keyword_step1 = remove_stop_words(raw_keyword.strip())
+    # --- PAKAI LOGIKA V.20 ---
+    clean_keyword_step1 = smart_clean_keyword(raw_keyword.strip())
+    
     clean_keyword = clean_keyword_step1.lower().strip()
     kata_kata = clean_keyword.split()
     kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
@@ -264,7 +294,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V18 (PUNCTUATION CLEANER) RUNNING"
+def home(): return "LADEN V20 (HYBRID LOGIC) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -281,7 +311,7 @@ def webhook():
         trigger_found = False
         keyword = ""
 
-        # --- LOGIKA V18 ---
+        # --- LOGIKA V20 ---
         
         # 1. CEK TAG LANGSUNG (VIP)
         is_direct_call = False
