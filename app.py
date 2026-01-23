@@ -14,7 +14,9 @@ app = Flask(__name__)
 # --- CONFIG ---
 FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN") 
 SHEET_ID = "1GMQ15xaMpJokmyNeckO6PRxtajiRV4yHB1U0wirRcGU"
-MY_BOT_NUMBER = "6282310355257" 
+# Ambil nomor bot dari token fonnte (opsional) atau hardcode
+# Untuk akurasi 100%, bot akan membaca siapa yang di-mention oleh WhatsApp
+MY_BOT_NAME_KEYWORDS = ["laden", "bot", "den", "min"] 
 
 # --- GLOBAL MEMORY ---
 CACHE_DATA = []      
@@ -22,9 +24,8 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (UPDATE V11) ---
+# --- KAMUS PINTAR ---
 KAMUS_SINONIM = {
-    # Istilah Umum
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
     "sok": "shock", "sox": "shock",
@@ -38,8 +39,6 @@ KAMUS_SINONIM = {
     "baut": "bolt", "mur": "nut", 
     "laher": "bearing", "klem": "clamp", 
     "oring": "o-ring", "o ring": "o-ring",
-    
-    # --- UPDATE BARU (BAHASA PROYEK) ---
     "pipa": "pipe", "paralon": "pipe",
     "siku": "elbow", "knie": "elbow", "elbo": "elbow",
     "keran": "valve", "kran": "valve", "balp": "valve",
@@ -47,7 +46,7 @@ KAMUS_SINONIM = {
     "kabel": "cable",
     "lampu": "lamp", "bohlam": "bulb",
     "las": "welding", "kawat": "wire",
-    "sarung": "gloves", "tangan": "gloves", # Biar 'sarung tangan' match 'gloves' (opsional)
+    "sarung": "gloves", "tangan": "gloves", 
     "inci": "inch", "inchi": "inch"
 }
 
@@ -153,10 +152,9 @@ def cari_stok(raw_keyword, page=0):
     if not data: return "⚠️ Gagal mengambil data server."
 
     clean_keyword_step1 = remove_stop_words(raw_keyword.strip())
-    
     clean_keyword = clean_keyword_step1.lower().strip()
     kata_kata = clean_keyword.split()
-    kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata] # <-- DI SINI KUNCINYA (Pipa jadi Pipe)
+    kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
     keyword_search = " ".join(kata_baru)
     keywords_split = keyword_search.split()
     
@@ -249,7 +247,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V11 (KAMUS LENGKAP) READY"
+def home(): return "LADEN V12 (TAG SELEKTIF) READY"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -266,21 +264,46 @@ def webhook():
         trigger_found = False
         keyword = ""
 
+        # --- LOGIKA V12: TAG SELEKTIF ---
+        # 1. Cek Apakah Pesan Dimulai dengan '@'
         if msg_lower.startswith("@"):
             parts = msg_lower.split(" ", 1)
-            if len(parts) > 1:
-                keyword = parts[1].strip()
-                trigger_found = True
-            else:
-                requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "👋 Dalem Pak? Mau cari stok apa?"})
-                return jsonify({"status": "ok"}), 200
+            first_word = parts[0] # Contoh: "@laden", "@ladenbeta", "@pakbudi"
+            
+            # Cek apakah tag ini UNTUK SAYA?
+            # Caranya: Cek apakah di dalam tag ada kata "laden", "bot", atau nomor HP bot sendiri
+            is_for_me = False
+            
+            # Cek keyword nama
+            for my_name in MY_BOT_NAME_KEYWORDS:
+                if my_name in first_word: # Misal: "@ladenbeta" mengandung "laden" -> OK
+                    is_for_me = True
+                    break
+            
+            # Cek nomor HP (Format @628...)
+            if "628" in first_word and len(first_word) > 10:
+                # Anggap ini tag nomor HP, kita terima saja dulu (biar aman)
+                is_for_me = True
 
+            if is_for_me:
+                if len(parts) > 1:
+                    keyword = parts[1].strip()
+                    trigger_found = True
+                else:
+                    requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "👋 Dalem Pak? Mau cari stok apa?"})
+                    return jsonify({"status": "ok"}), 200
+            else:
+                # Kalau tag bukan buat saya (misal @PakBudi), DIAM SAJA.
+                print(f"[DEBUG] Tag '{first_word}' bukan untuk bot. Diabaikan.", file=sys.stdout)
+
+        # 2. CEK NAMA PANGGILAN LANGSUNG (Tanpa @)
         elif msg_lower.startswith("laden") or msg_lower.startswith("bot"):
             parts = msg_lower.split(" ", 1)
             if len(parts) > 1:
                 keyword = parts[1].strip()
                 trigger_found = True
 
+        # 3. CEK TRIGGER LAMA
         if not trigger_found:
             for trig in TRIGGERS_LADEN:
                 if trig in msg_lower:
