@@ -22,7 +22,7 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (V.27) ---
+# --- KAMUS PINTAR (V.28) ---
 KAMUS_SINONIM = {
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
@@ -104,25 +104,15 @@ def normalize_pn(text):
     t = t.replace('o', '0')         
     return t
 
-# --- CEK DOKUMEN SAP (MO/RO/PR/PO) ---
+# --- CEK DOKUMEN SAP ---
 def is_sap_document(word):
-    # Bersihkan tanda baca
     clean_w = re.sub(r'[^0-9]', '', word)
-    
-    # Syarat Dokumen SAP: Harus 10 Digit Angka
-    if len(clean_w) != 10:
-        return False
-        
-    # Cek Awalan (Prefix)
-    # MO/RO: 22, 24, 26
-    # PR/PO: 10
+    if len(clean_w) != 10: return False
     if clean_w.startswith("10") or clean_w.startswith("22") or clean_w.startswith("24") or clean_w.startswith("26"):
         return True
-        
     return False
 
 def smart_clean_keyword(text):
-    # UPDATE V.27.1: Tambah replace(":", "") agar format 'cek stok :' aman
     text_clean = text.replace("?", "").replace("!", "").replace(",", " ").replace(".", " ").replace(":", "") 
     text_clean = re.sub(r'@[a-zA-Z0-9]+', '', text_clean)
     has_digit = any(char.isdigit() for char in text_clean)
@@ -134,7 +124,6 @@ def smart_clean_keyword(text):
         w_lower = w.lower()
         if w_lower in STOP_WORDS: continue
         if has_digit and w_lower in GENERIC_ITEMS: continue
-        # SKIP JIKA ITU NOMOR DOKUMEN SAP
         if is_sap_document(w): continue 
         
         final_words.append(w)
@@ -231,7 +220,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             hasil = [d for d in data if tebakan.lower() in d['desc'].lower()]
 
     if not hasil: 
-        if is_batch: return f"❌ {keyword_search.upper()}: Kosong/Tidak Ditemukan\n"
+        if is_batch: return f"❌ {keyword_search.upper()}: ⛔ Tidak Ditemukan\n"
         return f"🙏 Stok *'{clean_keyword}'* boten wonten."
 
     pesan = ""
@@ -239,6 +228,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         pesan = f"🙏 *Laden jawab ya...*\n"
         if pesan_koreksi: pesan += pesan_koreksi
     
+    # Batasi tampilan (Single: 10, Batch: 3 per item agar tidak kepanjangan)
     limit = 3 if is_batch else 10
     unik_mat_list = []
     seen = set()
@@ -251,17 +241,27 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         items_same_mat = [x for x in hasil if x['mat'] == mat_id]
         first_item = items_same_mat[0]
         nama_barang = first_item['desc']
+        batch_info = f"({first_item['batch']})" if first_item['batch'] else ""
+        spec_text = f"({first_item['spec']})" if first_item['spec'] else ""
         m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
         h_qty = sum(x['qty'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         
+        # LOGIC V.28: FORMAT LENGKAP UNTUK SEMUA (BATCH MAUPUN SINGLE)
+        # Kita kembalikan detail Lokasi, Mat ID, dan Spec
+        locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper())
+        locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper())
+        str_loc_m = ", ".join([l for l in locs_m if clean_text(l)]) or "-"
+        str_loc_h = ", ".join([l for l in locs_h if clean_text(l)]) or "-"
+
+        pesan += f"*{nama_barang} {batch_info}*\n"
+        pesan += f"Mat: {mat_id} {spec_text}\n" # Part Number + Spec (Penting!)
+        pesan += f"Mining : {int(m_qty)} | Hauling : {int(h_qty)}\n"
+        pesan += f"({str_loc_m} | {str_loc_h})\n" # Lokasi Bin (Penting!)
+        
         if is_batch:
-            pesan += f"✅ *{nama_barang}*\n   (M: {int(m_qty)} | H: {int(h_qty)})\n"
+            pesan += "------------------\n" # Pemisah antar barang di list
         else:
-            locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper())
-            locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper())
-            str_loc_m = ", ".join([l for l in locs_m if clean_text(l)]) or "-"
-            str_loc_h = ", ".join([l for l in locs_h if clean_text(l)]) or "-"
-            pesan += f"*{nama_barang}*\nMat: {mat_id}\nMining : {int(m_qty)} | Hauling : {int(h_qty)}\n({str_loc_m} | {str_loc_h})\n\n"
+            pesan += "\n"
 
     if not is_batch:
         waktu_update_data = "Live via Google Sheet" 
@@ -274,7 +274,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V27.1 (FLEXIBLE FORMAT) RUNNING"
+def home(): return "LADEN V28 (FULL DETAIL MULTI-SEARCH) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -292,8 +292,6 @@ def webhook():
         trigger_found = False
         
         # --- LOGIKA TRIGGER ---
-        
-        # 1. CEK TAG LANGSUNG
         is_direct_call = False
         if msg_lower.startswith("@"):
             parts = msg_lower.split(" ", 1)
@@ -303,18 +301,15 @@ def webhook():
             if "628" in first_word and len(first_word) > 10: is_direct_call = True
             if is_direct_call: trigger_found = True
 
-        # 2. CEK NAMA
         elif any(msg_lower.startswith(name) for name in MY_BOT_NAME_KEYWORDS):
             trigger_found = True
 
-        # 3. CEK TRIGGER LAMA
         if not trigger_found:
             for trig in TRIGGERS_LAMA:
                 if trig in msg_lower:
                     trigger_found = True
                     break
 
-        # 4. JALUR UMUM
         if not trigger_found:
             has_trigger_word = any(w in words for w in UNIVERSAL_KEYWORDS)
             is_operational = any(w in msg_lower for w in BLACKLIST_WORDS)
@@ -324,7 +319,6 @@ def webhook():
                 trigger_found = True
                 print("[DEBUG] Trigger Jalur Umum (Auto Detect)", file=sys.stdout)
 
-        # --- SAFETY CHECK AKHIR ---
         if trigger_found:
             if any(bad in msg_lower for bad in BLACKLIST_WORDS):
                 print(f"[DEBUG] Dibatalkan Blacklist Konteks", file=sys.stdout)
@@ -337,7 +331,7 @@ def webhook():
                 clean_msg = re.sub(r'\b'+trig+r'\b', '', clean_msg, flags=re.IGNORECASE)
             clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', clean_msg)
             
-            # SPLIT BERDASARKAN NEWLINE ATAU KOMA
+            # Split berdasarkan newline atau koma
             raw_lines = re.split(r'[\n,]', clean_msg)
             
             valid_searches = []
@@ -358,7 +352,10 @@ def webhook():
                 hasil_cari = cari_stok(keyword, page=0, is_batch=is_batch)
                 if hasil_cari:
                     final_reply += hasil_cari
-                    if is_batch: final_reply += "------------------\n"
+            
+            if is_batch:
+                # Tambahkan Timestamp di akhir kalau multi-item
+                final_reply += f"🕒 Live Check: {datetime.now().strftime('%H:%M')}"
 
             requests.post(
                 "https://api.fonnte.com/send", 
