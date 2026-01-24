@@ -22,8 +22,7 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (V.24) ---
-# Baut tetap dipetakan ke Bolt agar pencarian umum "Cek Baut" ketemu "Hex Bolt"
+# --- KAMUS PINTAR (V.25) ---
 KAMUS_SINONIM = {
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
@@ -48,14 +47,14 @@ KAMUS_SINONIM = {
     "inci": "inch", "inchi": "inch",
     "cyl": "cylinder", "silinder": "cylinder",
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
-    # Sarung & Tangan SUDAH DIHAPUS (Aman untuk Sarung Tangan Kain)
 }
 
-# --- KONFIGURASI FILTER KATA ---
+# --- KONFIGURASI FILTER KATA (V.25) ---
 
 TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
 UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"]
 
+# Tambahan Blacklist Percakapan: "edit", "besok", "ntar", "dicek"
 BLACKLIST_WORDS = [
     "lambung", "cn", "sn", "hm", "km", "engine", 
     "unit", "dt", "hd", "lv", "gd", "dozer", "grader", 
@@ -63,10 +62,10 @@ BLACKLIST_WORDS = [
     "service", "perbaikan", "laporan", "kondisi", "wo", "pr", "po",
     "siap", "standby", "monitor", "copy", "rogger", "86",
     "update", "urung", "belum", "lagi", "merapat", "info", "progress", "nanya",
-    "absen", "lokasi", "posisi", "cuaca" 
+    "absen", "lokasi", "posisi", "cuaca",
+    "edit", "besok", "kemarin", "lusa", "ntar", "dicek", "di cek"
 ]
 
-# --- V.24 STOP WORDS MURNI (HAPUS 'BAUT' DARI SINI) ---
 STOP_WORDS = [
     "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", 
     "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", 
@@ -75,7 +74,6 @@ STOP_WORDS = [
     "laden", "bot", "den", "min", "admin", "beta", "tes" 
 ]
 
-# --- KATA GENERIK (HANYA DIBUANG JIKA ADA ANGKA) ---
 GENERIC_ITEMS = ["baut", "bolt", "mur", "nut", "screw", "washer", "ring"]
 
 def log(message):
@@ -107,11 +105,9 @@ def normalize_pn(text):
     return t
 
 def smart_clean_keyword(text):
-    # 1. Hapus Tanda Baca & Tag ID
     text_clean = text.replace("?", "").replace("!", "").replace(",", "").replace(".", " ")
-    text_clean = re.sub(r'@[a-zA-Z0-9]+', '', text_clean)
+    text_clean = re.sub(r'@[a-zA-Z0-9]+', '', text_clean) # Hapus Tag ID
 
-    # 2. Cek apakah ada ANGKA
     has_digit = any(char.isdigit() for char in text_clean)
     
     words = text_clean.split()
@@ -119,18 +115,10 @@ def smart_clean_keyword(text):
     
     for w in words:
         w_lower = w.lower()
-        
-        # Buang Sampah Murni (cek, stok, dll)
         if w_lower in STOP_WORDS: continue
-        
-        # --- LOGIKA V.24 ---
-        # Hanya buang kata GENERIC (baut) JIKA ada ANGKA di kalimat
-        # Jika tidak ada angka, "baut" JANGAN dibuang (agar bisa dicari)
         if has_digit and w_lower in GENERIC_ITEMS: continue
-        
         final_words.append(w)
         
-    # Fallback: Jika kosong, kembalikan kata aslinya (minus stop words)
     if not final_words:
         fallback = [w for w in words if w.lower() not in STOP_WORDS]
         return " ".join(fallback)
@@ -287,7 +275,7 @@ def cari_stok(raw_keyword, page=0):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V24 (SMART SELECTOR) RUNNING"
+def home(): return "LADEN V25 (ETIKA SOPAN) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -300,12 +288,14 @@ def webhook():
 
     if message:
         msg_lower = message.lower().strip()
+        words = msg_lower.split() # Pecah kata per kata untuk analisis
         
         trigger_found = False
         keyword = ""
 
-        # --- LOGIKA V24 ---
+        # --- LOGIKA V25 ---
         
+        # 1. CEK TAG LANGSUNG (VIP) - INI TETAP BOLEH PANJANG
         is_direct_call = False
         if msg_lower.startswith("@"):
             parts = msg_lower.split(" ", 1)
@@ -322,6 +312,7 @@ def webhook():
                     requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": "👋 Dalem Pak? Mau cari stok apa?"})
                     return jsonify({"status": "ok"}), 200
 
+        # 2. CEK NAMA (VIP)
         elif any(msg_lower.startswith(name) for name in MY_BOT_NAME_KEYWORDS):
             is_direct_call = True
             parts = msg_lower.split(" ", 1)
@@ -329,6 +320,7 @@ def webhook():
                 keyword = parts[1].strip()
                 trigger_found = True
 
+        # 3. CEK TRIGGER LAMA
         if not trigger_found:
             for trig in TRIGGERS_LAMA:
                 if trig in msg_lower:
@@ -336,16 +328,26 @@ def webhook():
                     trigger_found = True
                     break
 
+        # 4. JALUR UMUM (AUTO-DETECT) - DIPERKETAT DI V.25
         if not trigger_found:
-            has_trigger_word = any(w in msg_lower for w in UNIVERSAL_KEYWORDS)
+            # RULE 1: Cek Kata Utuh (Bukan Substring)
+            # "dicek" tidak akan men-trigger "cek"
+            has_trigger_word = any(w in words for w in UNIVERSAL_KEYWORDS)
+            
+            # RULE 2: Cek Blacklist (Termasuk "edit", "besok", "ntar")
             is_operational = any(w in msg_lower for w in BLACKLIST_WORDS)
             
-            if has_trigger_word and not is_operational:
+            # RULE 3: Max Kata (Agar tidak nyaut orang curhat/koordinasi panjang)
+            is_short_message = len(words) <= 7 
+
+            if has_trigger_word and not is_operational and is_short_message:
                 clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', message).strip()
                 keyword = clean_msg
                 trigger_found = True
                 print("[DEBUG] Trigger Jalur Umum (Auto Detect)", file=sys.stdout)
 
+        # --- EKSEKUSI ---
+        
         if trigger_found:
             intro_keys = ["siapa", "intro", "kenalan"]
             if any(k in msg_lower for k in intro_keys):
