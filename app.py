@@ -22,7 +22,7 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (V.31) ---
+# --- KAMUS PINTAR (V.33) ---
 KAMUS_SINONIM = {
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
@@ -224,6 +224,19 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             unik_mat_list.append(x['mat'])
             seen.add(x['mat'])
     total_items = len(unik_mat_list)
+    
+    ITEMS_PER_PAGE = 10 
+    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    
+    if page >= total_pages and page > 0: return "⚠️ Sudah halaman terakhir, Pak."
+
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    
+    if is_batch:
+        current_page_mats = unik_mat_list[:3]
+    else:
+        current_page_mats = unik_mat_list[start_idx:end_idx]
 
     pesan_koreksi = ""
     if not hasil and not is_batch:
@@ -242,12 +255,12 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     if not is_batch:
         pesan = f"🙏 *Laden jawab ya...*\n"
         if pesan_koreksi: pesan += pesan_koreksi
+        # --- HEADER TOTAL ITEM (RESTORED) ---
         pesan += f"Pencarian: {keyword_search.upper()} ({total_items} items)\n"
+        pesan += f"📖 Halaman {page+1} dari {total_pages}\n"
         pesan += "------------------\n"
     
-    limit = 3 if is_batch else 10
-    
-    for mat_id in unik_mat_list[:limit]:
+    for mat_id in current_page_mats:
         items_same_mat = [x for x in hasil if x['mat'] == mat_id]
         first_item = items_same_mat[0]
         nama_barang = first_item['desc']
@@ -272,8 +285,8 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             pesan += "\n"
 
     if not is_batch:
-        if total_items > limit:
-             pesan += f"👇 _Ditampilkan {limit} dari {total_items} item._\n"
+        if page < total_pages - 1:
+             pesan += f"👇 _Ketik *Lagi* atau *Next* untuk halaman selanjutnya._\n"
 
         real_time = get_general_update_time()
         pesan += f"🕒 Updated: {real_time}"
@@ -281,7 +294,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V31 (BLACKLIST PO FIXED) RUNNING"
+def home(): return "LADEN V33 (SMART GATEKEEPER) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -298,6 +311,19 @@ def webhook():
         
         trigger_found = False
         
+        # 1. CEK NEXT / LAGI (Memory Check)
+        next_triggers = ["lagi", "next", "lanjut", "berikutnya", "more"]
+        if msg_lower in next_triggers:
+            if sender_id in USER_SESSIONS:
+                session = USER_SESSIONS[sender_id]
+                keyword_sess = session['keyword']
+                next_page = session['page'] + 1
+                USER_SESSIONS[sender_id]['page'] = next_page
+                jawaban = cari_stok(keyword_sess, page=next_page, is_batch=False)
+                requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": jawaban})
+                return jsonify({"status": "ok"}), 200
+        
+        # 2. TRIGGER NORMAL (JALUR VIP & UMUM)
         is_direct_call = False
         if msg_lower.startswith("@"):
             parts = msg_lower.split(" ", 1)
@@ -318,23 +344,29 @@ def webhook():
 
         if not trigger_found:
             has_trigger_word = any(w in words for w in UNIVERSAL_KEYWORDS)
-            is_operational = any(w in msg_lower for w in BLACKLIST_WORDS)
+            
+            # --- V.33 FIX: CEK BLACKLIST PAKAI BOUNDARY (\b) ---
+            # Supaya "POINT" (aman) tidak dianggap "PO" (terlarang)
+            is_operational = False
+            for bad in BLACKLIST_WORDS:
+                if re.search(r'\b' + re.escape(bad) + r'\b', msg_lower):
+                    is_operational = True
+                    break
+            
             is_short_message = len(words) <= 15 
 
             if has_trigger_word and not is_operational and is_short_message:
                 trigger_found = True
                 print("[DEBUG] Trigger Jalur Umum (Auto Detect)", file=sys.stdout)
 
-        # --- SAFETY CHECK AKHIR (V.31 FIXED) ---
+        # 3. SAFETY CHECK AKHIR (ANTI GOSIP)
         if trigger_found:
-            # Gunakan Regex Boundary (\b) untuk memastikan kata utuh
-            # Agar "po" (blacklist) tidak men-trigger blacklist pada kata "point"
             for bad in BLACKLIST_WORDS:
                 if re.search(r'\b' + re.escape(bad) + r'\b', msg_lower):
-                    print(f"[DEBUG] Dibatalkan Blacklist Konteks: {bad}", file=sys.stdout)
-                    trigger_found = False 
+                    trigger_found = False # Batalkan
                     break
 
+        # 4. EKSEKUSI PENCARIAN
         if trigger_found:
             clean_msg = message
             for trig in TRIGGERS_LAMA + UNIVERSAL_KEYWORDS + MY_BOT_NAME_KEYWORDS:
@@ -357,6 +389,9 @@ def webhook():
             
             if is_batch: final_reply += "📦 *Hasil Pencarian Multi-Item:*\n\n"
             
+            if not is_batch:
+                USER_SESSIONS[sender_id] = {'keyword': valid_searches[0], 'page': 0}
+
             for keyword in valid_searches:
                 hasil_cari = cari_stok(keyword, page=0, is_batch=is_batch)
                 if hasil_cari:
