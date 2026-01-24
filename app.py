@@ -22,7 +22,7 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (V.28) ---
+# --- KAMUS PINTAR (V.30) ---
 KAMUS_SINONIM = {
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
@@ -104,7 +104,6 @@ def normalize_pn(text):
     t = t.replace('o', '0')         
     return t
 
-# --- CEK DOKUMEN SAP ---
 def is_sap_document(word):
     clean_w = re.sub(r'[^0-9]', '', word)
     if len(clean_w) != 10: return False
@@ -182,6 +181,14 @@ def get_data_lightweight():
         log(f"⚠️ Gagal Download: {e}")
         return CACHE_DATA
 
+def get_general_update_time():
+    data = get_data_lightweight()
+    if not data: return "Unknown"
+    for item in data:
+        if item['last_update'] and len(item['last_update']) > 5:
+            return item['last_update']
+    return "Live via Google Sheet"
+
 def cari_stok(raw_keyword, page=0, is_batch=False):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
@@ -210,6 +217,15 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         if match_desc or match_mat:
             hasil.append(item)
 
+    # --- HITUNG TOTAL ITEM UNIK DULU (UNTUK HEADER V.30) ---
+    unik_mat_list = []
+    seen = set()
+    for x in hasil:
+        if x['mat'] not in seen:
+            unik_mat_list.append(x['mat'])
+            seen.add(x['mat'])
+    total_items = len(unik_mat_list)
+
     pesan_koreksi = ""
     if not hasil and not is_batch:
         all_names = list(set([d['desc'] for d in data]))
@@ -227,15 +243,12 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     if not is_batch:
         pesan = f"🙏 *Laden jawab ya...*\n"
         if pesan_koreksi: pesan += pesan_koreksi
+        # --- V.30 RESTORE HEADER SINGLE SEARCH ---
+        pesan += f"Pencarian: {keyword_search.upper()} ({total_items} items)\n"
+        pesan += "------------------\n"
     
-    # Batasi tampilan (Single: 10, Batch: 3 per item agar tidak kepanjangan)
+    # Limit tampilan
     limit = 3 if is_batch else 10
-    unik_mat_list = []
-    seen = set()
-    for x in hasil:
-        if x['mat'] not in seen:
-            unik_mat_list.append(x['mat'])
-            seen.add(x['mat'])
     
     for mat_id in unik_mat_list[:limit]:
         items_same_mat = [x for x in hasil if x['mat'] == mat_id]
@@ -246,35 +259,33 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
         h_qty = sum(x['qty'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         
-        # LOGIC V.28: FORMAT LENGKAP UNTUK SEMUA (BATCH MAUPUN SINGLE)
-        # Kita kembalikan detail Lokasi, Mat ID, dan Spec
         locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper())
         locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         str_loc_m = ", ".join([l for l in locs_m if clean_text(l)]) or "-"
         str_loc_h = ", ".join([l for l in locs_h if clean_text(l)]) or "-"
 
         pesan += f"*{nama_barang} {batch_info}*\n"
-        pesan += f"Mat: {mat_id} {spec_text}\n" # Part Number + Spec (Penting!)
+        pesan += f"Mat: {mat_id} {spec_text}\n"
         pesan += f"Mining : {int(m_qty)} | Hauling : {int(h_qty)}\n"
-        pesan += f"({str_loc_m} | {str_loc_h})\n" # Lokasi Bin (Penting!)
+        pesan += f"({str_loc_m} | {str_loc_h})\n"
         
         if is_batch:
-            pesan += "------------------\n" # Pemisah antar barang di list
+            pesan += "------------------\n" 
         else:
             pesan += "\n"
 
     if not is_batch:
-        waktu_update_data = "Live via Google Sheet" 
-        for h in hasil:
-            if h['last_update']:
-                waktu_update_data = h['last_update']
-                break
-        pesan += f"🕒 {waktu_update_data}"
+        # Tampilkan Pesan jika item lebih banyak dari limit
+        if total_items > limit:
+             pesan += f"👇 _Ditampilkan {limit} dari {total_items} item._\n"
+
+        real_time = get_general_update_time()
+        pesan += f"🕒 Updated: {real_time}"
         
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V28 (FULL DETAIL MULTI-SEARCH) RUNNING"
+def home(): return "LADEN V30 (HEADER RESTORED) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -291,7 +302,6 @@ def webhook():
         
         trigger_found = False
         
-        # --- LOGIKA TRIGGER ---
         is_direct_call = False
         if msg_lower.startswith("@"):
             parts = msg_lower.split(" ", 1)
@@ -324,14 +334,12 @@ def webhook():
                 print(f"[DEBUG] Dibatalkan Blacklist Konteks", file=sys.stdout)
                 trigger_found = False 
 
-        # --- EKSEKUSI (MULTI-SEARCH) ---
         if trigger_found:
             clean_msg = message
             for trig in TRIGGERS_LAMA + UNIVERSAL_KEYWORDS + MY_BOT_NAME_KEYWORDS:
                 clean_msg = re.sub(r'\b'+trig+r'\b', '', clean_msg, flags=re.IGNORECASE)
             clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', clean_msg)
             
-            # Split berdasarkan newline atau koma
             raw_lines = re.split(r'[\n,]', clean_msg)
             
             valid_searches = []
@@ -354,8 +362,8 @@ def webhook():
                     final_reply += hasil_cari
             
             if is_batch:
-                # Tambahkan Timestamp di akhir kalau multi-item
-                final_reply += f"🕒 Live Check: {datetime.now().strftime('%H:%M')}"
+                real_time = get_general_update_time()
+                final_reply += f"🕒 Updated: {real_time}"
 
             requests.post(
                 "https://api.fonnte.com/send", 
