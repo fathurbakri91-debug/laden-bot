@@ -22,7 +22,7 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (V.30) ---
+# --- KAMUS PINTAR (V.31) ---
 KAMUS_SINONIM = {
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
@@ -217,7 +217,6 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         if match_desc or match_mat:
             hasil.append(item)
 
-    # --- HITUNG TOTAL ITEM UNIK DULU (UNTUK HEADER V.30) ---
     unik_mat_list = []
     seen = set()
     for x in hasil:
@@ -243,11 +242,9 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     if not is_batch:
         pesan = f"🙏 *Laden jawab ya...*\n"
         if pesan_koreksi: pesan += pesan_koreksi
-        # --- V.30 RESTORE HEADER SINGLE SEARCH ---
         pesan += f"Pencarian: {keyword_search.upper()} ({total_items} items)\n"
         pesan += "------------------\n"
     
-    # Limit tampilan
     limit = 3 if is_batch else 10
     
     for mat_id in unik_mat_list[:limit]:
@@ -275,7 +272,6 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             pesan += "\n"
 
     if not is_batch:
-        # Tampilkan Pesan jika item lebih banyak dari limit
         if total_items > limit:
              pesan += f"👇 _Ditampilkan {limit} dari {total_items} item._\n"
 
@@ -285,7 +281,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V30 (HEADER RESTORED) RUNNING"
+def home(): return "LADEN V31 (BLACKLIST PO FIXED) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -329,10 +325,15 @@ def webhook():
                 trigger_found = True
                 print("[DEBUG] Trigger Jalur Umum (Auto Detect)", file=sys.stdout)
 
+        # --- SAFETY CHECK AKHIR (V.31 FIXED) ---
         if trigger_found:
-            if any(bad in msg_lower for bad in BLACKLIST_WORDS):
-                print(f"[DEBUG] Dibatalkan Blacklist Konteks", file=sys.stdout)
-                trigger_found = False 
+            # Gunakan Regex Boundary (\b) untuk memastikan kata utuh
+            # Agar "po" (blacklist) tidak men-trigger blacklist pada kata "point"
+            for bad in BLACKLIST_WORDS:
+                if re.search(r'\b' + re.escape(bad) + r'\b', msg_lower):
+                    print(f"[DEBUG] Dibatalkan Blacklist Konteks: {bad}", file=sys.stdout)
+                    trigger_found = False 
+                    break
 
         if trigger_found:
             clean_msg = message
