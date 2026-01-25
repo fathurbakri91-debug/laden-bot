@@ -22,7 +22,7 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (V.33) ---
+# --- KAMUS PINTAR (Sama seperti V.24) ---
 KAMUS_SINONIM = {
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
@@ -49,11 +49,13 @@ KAMUS_SINONIM = {
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
 }
 
-# --- KONFIGURASI FILTER KATA ---
+# --- KONFIGURASI FILTER KATA (UPDATED V.26) ---
 TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
 UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"]
 
+# DAFTAR KATA TERLARANG (ANTI SPAM & ANTI GOSIP)
 BLACKLIST_WORDS = [
+    # Kata Operasional (Biar gak nyaut laporan)
     "lambung", "cn", "sn", "hm", "km", "engine", 
     "unit", "dt", "hd", "lv", "gd", "dozer", "grader", 
     "mekanik", "driver", "operator", "breakdown", "rfu", "schedule", 
@@ -62,8 +64,12 @@ BLACKLIST_WORDS = [
     "update", "urung", "belum", "lagi", "merapat", "info", "progress", "nanya",
     "absen", "lokasi", "posisi", "cuaca", "shift",
     "edit", "besok", "kemarin", "lusa", "ntar", "dicek", "di cek",
+    
+    # Kata Percakapan / Basa-basi (ANTI GOSIP - BARU V.26)
     "senggol", "colek", "biar", "dulu", "dong", "tuh", "nih", "dijawab", 
-    "jawab", "cuy", "woi", "halo", "test", "tes", "wkwk", "haha"
+    "jawab", "cuy", "woi", "halo", "test", "tes", "wkwk", "haha",
+    "rajin", "pinter", "bodoh", "goblok", "lemot", "rusak", "error", 
+    "lur", "gan", "bang", "mz", "mas", "pak", "bu", "om", "kah", "kok", "sih"
 ]
 
 STOP_WORDS = [
@@ -104,15 +110,8 @@ def normalize_pn(text):
     t = t.replace('o', '0')         
     return t
 
-def is_sap_document(word):
-    clean_w = re.sub(r'[^0-9]', '', word)
-    if len(clean_w) != 10: return False
-    if clean_w.startswith("10") or clean_w.startswith("22") or clean_w.startswith("24") or clean_w.startswith("26"):
-        return True
-    return False
-
 def smart_clean_keyword(text):
-    text_clean = text.replace("?", "").replace("!", "").replace(",", " ").replace(".", " ").replace(":", "") 
+    text_clean = text.replace("?", "").replace("!", "") # Buang tanda tanya/seru
     text_clean = re.sub(r'@[a-zA-Z0-9]+', '', text_clean)
     has_digit = any(char.isdigit() for char in text_clean)
     
@@ -123,8 +122,6 @@ def smart_clean_keyword(text):
         w_lower = w.lower()
         if w_lower in STOP_WORDS: continue
         if has_digit and w_lower in GENERIC_ITEMS: continue
-        if is_sap_document(w): continue 
-        
         final_words.append(w)
         
     if not final_words: return ""
@@ -144,6 +141,7 @@ def get_data_lightweight():
         if not raw_rows: return []
         headers = [h.strip().lower() for h in raw_rows[0]]
         
+        # Mapping Index (Flexible)
         idx_desc = next((i for i, h in enumerate(headers) if "desc" in h), -1)
         idx_mat  = next((i for i, h in enumerate(headers) if "material" in h and "desc" not in h), -1)
         idx_qty  = next((i for i, h in enumerate(headers) if "total" in h or "stock" in h or "unrestricted" in h), -1)
@@ -181,25 +179,18 @@ def get_data_lightweight():
         log(f"⚠️ Gagal Download: {e}")
         return CACHE_DATA
 
-def get_general_update_time():
-    data = get_data_lightweight()
-    if not data: return "Unknown"
-    for item in data:
-        if item['last_update'] and len(item['last_update']) > 5:
-            return item['last_update']
-    return "Live via Google Sheet"
-
-def cari_stok(raw_keyword, page=0, is_batch=False):
+def cari_stok(raw_keyword):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
 
-    clean_keyword_step1 = smart_clean_keyword(raw_keyword.strip())
-    if not clean_keyword_step1: return "" 
+    clean_keyword = smart_clean_keyword(raw_keyword).lower().strip()
+    if not clean_keyword: return "⚠️ _Maaf, kata kuncinya kurang jelas pak._"
 
-    clean_keyword = clean_keyword_step1.lower().strip()
+    # Logika Hybrid (Sama seperti V.24)
     kata_kata = clean_keyword.split()
     kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
     keyword_search = " ".join(kata_baru)
+    
     keywords_split = keyword_search.split()
     keyword_pn_clean = normalize_pn(keyword_search)
 
@@ -211,35 +202,17 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             if k not in teks_desc:
                 match_desc = False
                 break
+        
         match_mat = False
         if keyword_pn_clean in normalize_pn(item['mat']):
             match_mat = True
+
         if match_desc or match_mat:
             hasil.append(item)
 
-    unik_mat_list = []
-    seen = set()
-    for x in hasil:
-        if x['mat'] not in seen:
-            unik_mat_list.append(x['mat'])
-            seen.add(x['mat'])
-    total_items = len(unik_mat_list)
-    
-    ITEMS_PER_PAGE = 10 
-    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-    
-    if page >= total_pages and page > 0: return "⚠️ Sudah halaman terakhir, Pak."
-
-    start_idx = page * ITEMS_PER_PAGE
-    end_idx = start_idx + ITEMS_PER_PAGE
-    
-    if is_batch:
-        current_page_mats = unik_mat_list[:3]
-    else:
-        current_page_mats = unik_mat_list[start_idx:end_idx]
-
+    # Auto Correct
     pesan_koreksi = ""
-    if not hasil and not is_batch:
+    if not hasil:
         all_names = list(set([d['desc'] for d in data]))
         mirip = difflib.get_close_matches(keyword_search.upper(), all_names, n=1, cutoff=0.7) 
         if mirip:
@@ -247,54 +220,48 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             pesan_koreksi = f"⚠️ _Mboten wonten. Maksud Bapak:_ *{tebakan}*?\n"
             hasil = [d for d in data if tebakan.lower() in d['desc'].lower()]
 
-    if not hasil: 
-        if is_batch: return f"❌ {keyword_search.upper()}: ⛔ Tidak Ditemukan\n"
-        return f"🙏 Stok *'{clean_keyword}'* boten wonten."
+    if not hasil: return f"🙏 Stok *'{keyword_search}'* boten wonten."
 
-    pesan = ""
-    if not is_batch:
-        pesan = f"🙏 *Laden jawab ya...*\n"
-        if pesan_koreksi: pesan += pesan_koreksi
-        # --- HEADER TOTAL ITEM (RESTORED) ---
-        pesan += f"Pencarian: {keyword_search.upper()} ({total_items} items)\n"
-        pesan += f"📖 Halaman {page+1} dari {total_pages}\n"
-        pesan += "------------------\n"
+    # Logic Tampilan Ringkas
+    unik_mat_list = []
+    seen = set()
+    for x in hasil:
+        if x['mat'] not in seen:
+            unik_mat_list.append(x['mat'])
+            seen.add(x['mat'])
     
-    for mat_id in current_page_mats:
+    pesan = f"🙏 *Laden jawab ya...*\n"
+    if pesan_koreksi: pesan += pesan_koreksi
+    
+    for mat_id in unik_mat_list[:10]:
         items_same_mat = [x for x in hasil if x['mat'] == mat_id]
         first_item = items_same_mat[0]
         nama_barang = first_item['desc']
-        batch_info = f"({first_item['batch']})" if first_item['batch'] else ""
-        spec_text = f"({first_item['spec']})" if first_item['spec'] else ""
+        
         m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
         h_qty = sum(x['qty'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         
+        # Lokasi Bin
         locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper())
         locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper())
+        
         str_loc_m = ", ".join([l for l in locs_m if clean_text(l)]) or "-"
         str_loc_h = ", ".join([l for l in locs_h if clean_text(l)]) or "-"
 
-        pesan += f"*{nama_barang} {batch_info}*\n"
-        pesan += f"Mat: {mat_id} {spec_text}\n"
-        pesan += f"Mining : {int(m_qty)} | Hauling : {int(h_qty)}\n"
-        pesan += f"({str_loc_m} | {str_loc_h})\n"
-        
-        if is_batch:
-            pesan += "------------------\n" 
-        else:
-            pesan += "\n"
+        pesan += f"*{nama_barang}*\nMat: {mat_id}\nMining : {int(m_qty)} | Hauling : {int(h_qty)}\n({str_loc_m} | {str_loc_h})\n\n"
 
-    if not is_batch:
-        if page < total_pages - 1:
-             pesan += f"👇 _Ketik *Lagi* atau *Next* untuk halaman selanjutnya._\n"
-
-        real_time = get_general_update_time()
-        pesan += f"🕒 Updated: {real_time}"
-        
+    # Footer Waktu
+    waktu_update_data = "Live via Google Sheet" 
+    for h in hasil:
+        if h['last_update']:
+            waktu_update_data = h['last_update']
+            break
+            
+    pesan += f"🕒 {waktu_update_data}"
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V33 (SMART GATEKEEPER) RUNNING"
+def home(): return "LADEN V26 (ANTI GOSIP) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -311,100 +278,62 @@ def webhook():
         
         trigger_found = False
         
-        # 1. CEK NEXT / LAGI (Memory Check)
-        next_triggers = ["lagi", "next", "lanjut", "berikutnya", "more"]
-        if msg_lower in next_triggers:
-            if sender_id in USER_SESSIONS:
-                session = USER_SESSIONS[sender_id]
-                keyword_sess = session['keyword']
-                next_page = session['page'] + 1
-                USER_SESSIONS[sender_id]['page'] = next_page
-                jawaban = cari_stok(keyword_sess, page=next_page, is_batch=False)
-                requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": jawaban})
-                return jsonify({"status": "ok"}), 200
-        
-        # 2. TRIGGER NORMAL (JALUR VIP & UMUM)
+        # 1. CEK TAG LANGSUNG (Prioritas Tinggi)
         is_direct_call = False
         if msg_lower.startswith("@"):
+            # Misal: @Laden stok baut (Dianggap perintah valid)
             parts = msg_lower.split(" ", 1)
             first_word = parts[0]
             for my_name in MY_BOT_NAME_KEYWORDS:
                 if my_name in first_word: is_direct_call = True
+            
+            # Cek kalau di-tag pakai nomor WA (biasanya 628...)
             if "628" in first_word and len(first_word) > 10: is_direct_call = True
+            
             if is_direct_call: trigger_found = True
 
+        # 2. CEK NAMA DEPAN (Prioritas Tinggi)
         elif any(msg_lower.startswith(name) for name in MY_BOT_NAME_KEYWORDS):
             trigger_found = True
 
+        # 3. CEK TRIGGER LAMA (Prioritas Sedang)
         if not trigger_found:
             for trig in TRIGGERS_LAMA:
                 if trig in msg_lower:
                     trigger_found = True
                     break
 
+        # 4. JALUR UMUM (Prioritas Rendah - RAWAN SPAM)
         if not trigger_found:
             has_trigger_word = any(w in words for w in UNIVERSAL_KEYWORDS)
             
-            # --- V.33 FIX: CEK BLACKLIST PAKAI BOUNDARY (\b) ---
-            # Supaya "POINT" (aman) tidak dianggap "PO" (terlarang)
-            is_operational = False
-            for bad in BLACKLIST_WORDS:
-                if re.search(r'\b' + re.escape(bad) + r'\b', msg_lower):
-                    is_operational = True
-                    break
-            
-            is_short_message = len(words) <= 15 
+            # --- FILTER BARU V.26 (ANTI GOSIP) ---
+            # Cek apakah ada kata-kata blacklist di dalam kalimat
+            is_operational = any(w in msg_lower for w in BLACKLIST_WORDS)
+            is_short_message = len(words) <= 7 
 
+            # HANYA JAWAB JIKA: Ada kata 'stok', BUKAN kalimat operasional/gosip, dan kalimat pendek.
             if has_trigger_word and not is_operational and is_short_message:
                 trigger_found = True
                 print("[DEBUG] Trigger Jalur Umum (Auto Detect)", file=sys.stdout)
+            else:
+                if has_trigger_word and is_operational:
+                    print(f"[DEBUG] Dibatalkan Blacklist: {message}", file=sys.stdout)
 
-        # 3. SAFETY CHECK AKHIR (ANTI GOSIP)
+        # --- EKSEKUSI ---
         if trigger_found:
-            for bad in BLACKLIST_WORDS:
-                if re.search(r'\b' + re.escape(bad) + r'\b', msg_lower):
-                    trigger_found = False # Batalkan
-                    break
-
-        # 4. EKSEKUSI PENCARIAN
-        if trigger_found:
+            # Bersihkan trigger word dari pesan
             clean_msg = message
             for trig in TRIGGERS_LAMA + UNIVERSAL_KEYWORDS + MY_BOT_NAME_KEYWORDS:
                 clean_msg = re.sub(r'\b'+trig+r'\b', '', clean_msg, flags=re.IGNORECASE)
-            clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', clean_msg)
             
-            raw_lines = re.split(r'[\n,]', clean_msg)
+            clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', clean_msg) # Hapus tag
             
-            valid_searches = []
-            for line in raw_lines:
-                cleaned_line = smart_clean_keyword(line)
-                if cleaned_line: 
-                    valid_searches.append(cleaned_line)
-            
-            if not valid_searches:
-                return jsonify({"status": "ignored"}), 200
-                
-            final_reply = ""
-            is_batch = len(valid_searches) > 1
-            
-            if is_batch: final_reply += "📦 *Hasil Pencarian Multi-Item:*\n\n"
-            
-            if not is_batch:
-                USER_SESSIONS[sender_id] = {'keyword': valid_searches[0], 'page': 0}
-
-            for keyword in valid_searches:
-                hasil_cari = cari_stok(keyword, page=0, is_batch=is_batch)
-                if hasil_cari:
-                    final_reply += hasil_cari
-            
-            if is_batch:
-                real_time = get_general_update_time()
-                final_reply += f"🕒 Updated: {real_time}"
-
+            jawaban = cari_stok(clean_msg)
             requests.post(
                 "https://api.fonnte.com/send", 
                 headers={"Authorization": FONNTE_TOKEN},
-                data={"target": target_reply, "message": final_reply}
+                data={"target": target_reply, "message": jawaban}
             )
 
     return jsonify({"status": "ok"}), 200
