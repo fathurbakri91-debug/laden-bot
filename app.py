@@ -22,9 +22,13 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR ---
+# --- KAMUS PINTAR (V.31 SINONIM) ---
 KAMUS_SINONIM = {
-    "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
+    # Update Wypall -> Wipers (Agar match dengan JUMBO ROLL WIPERS)
+    "wipol": "wipers", "wypal": "wipers", "waipol": "wipers", 
+    "wypall": "wipers", "wipal": "wipers", "jumbo": "wipers",
+    
+    # Sinonim Lama
     "hendel": "handle", "handel": "handle",
     "sok": "shock", "sox": "shock",
     "breket": "bracket", "briket": "bracket",
@@ -49,25 +53,26 @@ KAMUS_SINONIM = {
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
 }
 
-# --- KONFIGURASI FILTER KATA (V.29 SMART GATEKEEPER) ---
+# --- KONFIGURASI FILTER KATA (V.31) ---
 TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
 UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"]
 
-# 1. HARD BLACKLIST (PASTI GOSIP/TOXIC -> BLOKIR TOTAL)
+# 1. HARD BLACKLIST (PASTI GOSIP -> BLOKIR TOTAL)
+# "Bang", "Pak", "Bu" SUDAH DIHAPUS dari sini agar tidak memblokir perintah
 HARD_BLACKLIST = [
     "senggol", "colek", "biar", "dulu", "dijawab", 
     "jawab", "cuy", "woi", "halo", "test", "tes", "wkwk", "haha",
     "rajin", "pinter", "bodoh", "goblok", "lemot", "rusak", "error", 
-    "lur", "gan", "bang", "mz", "lek"
+    "lur", "gan", "mz", "lek"
 ]
 
 # 2. SOFT BLACKLIST (SAMBUNGAN BIASA -> BOLEH LEWAT KALAU ADA KATA 'STOK')
 SOFT_BLACKLIST = [
     "pak", "bu", "om", "kah", "kok", "sih", "dong", "tuh", "nih", 
-    "ready", "aman", "ada"
+    "ready", "aman", "ada", "bang", "mas", "mba", "kak"
 ]
 
-# 3. OPERATIONAL (BLOKIR AGAR TIDAK GANGGU LAPORAN)
+# 3. OPERATIONAL
 OPERATIONAL_WORDS = [
     "lambung", "cn", "sn", "hm", "km", "engine", 
     "unit", "dt", "hd", "lv", "gd", "dozer", "grader", 
@@ -79,13 +84,18 @@ OPERATIONAL_WORDS = [
     "edit", "besok", "kemarin", "lusa", "ntar", "dicek", "di cek"
 ]
 
+# --- V.31: STOP WORDS DIPERBANYAK ---
+# Kata-kata ini akan DIHAPUS sebelum pencarian agar tidak mengganggu
 STOP_WORDS = [
     "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", 
     "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", 
     "kah", "ya", "bisa", "pak", "mas", "bang", "bu", "om", "lek", 
     "bantu", "mohon", "coba", "tolongin", "mba", "kak", "sist", "gan",
     "laden", "bot", "den", "min", "admin", "beta", "tes",
-    "sent", "via", "fonnte", "com"
+    "sent", "via", "fonnte", "com",
+    # TAMBAHAN PEMBERSIH BARU (V.31)
+    "ukuran", "saja", "nya", "yang", "mana", "tipe", "type", "jenis", "model",
+    "merk", "brand", "butuh", "perlu", "punya", "pake", "pakai"
 ]
 
 GENERIC_ITEMS = ["baut", "bolt", "mur", "nut", "screw", "washer", "ring"]
@@ -126,7 +136,7 @@ def is_sap_document(word):
     return False
 
 def smart_clean_keyword(text):
-    if text.strip().startswith(">"): return "" # Anti Quote
+    if text.strip().startswith(">"): return "" 
     text_clean = text.replace("?", "").replace("!", "").replace(",", " ").replace(".", " ").replace(":", "") 
     text_clean = re.sub(r'@[a-zA-Z0-9]+', '', text_clean)
     has_digit = any(char.isdigit() for char in text_clean)
@@ -136,7 +146,7 @@ def smart_clean_keyword(text):
     
     for w in words:
         w_lower = w.lower()
-        if w_lower in STOP_WORDS: continue
+        if w_lower in STOP_WORDS: continue # Di sini "ukuran", "saja" akan dibuang
         if has_digit and w_lower in GENERIC_ITEMS: continue
         if is_sap_document(w): continue 
         
@@ -204,7 +214,6 @@ def get_general_update_time():
             return item['last_update']
     return "Live via Google Sheet"
 
-# --- V.29 FIX: PAGINATION & HEADER RESTORED ---
 def cari_stok(raw_keyword, page=0, is_batch=False):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
@@ -233,7 +242,6 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         if match_desc or match_mat:
             hasil.append(item)
 
-    # HITUNG TOTAL UNIK (Dikembalikan di V.29)
     unik_mat_list = []
     seen = set()
     for x in hasil:
@@ -250,7 +258,6 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     start_idx = page * ITEMS_PER_PAGE
     end_idx = start_idx + ITEMS_PER_PAGE
     
-    # Batch ambil 3, Single ambil 10
     if is_batch:
         current_page_mats = unik_mat_list[:3]
     else:
@@ -273,7 +280,6 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     if not is_batch:
         pesan = f"🙏 *Laden jawab ya...*\n"
         if pesan_koreksi: pesan += pesan_koreksi
-        # HEADER KEMBALI MUNCUL (V.29)
         pesan += f"Pencarian: {keyword_search.upper()} ({total_items} items)\n"
         pesan += f"📖 Halaman {page+1} dari {total_pages}\n"
         pesan += "------------------\n"
@@ -312,7 +318,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V29 (SMART GATEKEEPER + HEADER RESTORED) RUNNING"
+def home(): return "LADEN V31 (CLEAN KEYWORD + WYPALL FIX) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -329,7 +335,7 @@ def webhook():
         
         trigger_found = False
         
-        # 1. CEK NEXT / LAGI (Memory Check)
+        # 1. CEK NEXT / LAGI
         next_triggers = ["lagi", "next", "lanjut", "berikutnya", "more"]
         if msg_lower in next_triggers:
             if sender_id in USER_SESSIONS:
@@ -363,44 +369,25 @@ def webhook():
         # 3. JALUR UMUM (AUTO DETECT)
         if not trigger_found:
             has_trigger_word = any(w in words for w in UNIVERSAL_KEYWORDS)
-            
-            # Cek Hard Blacklist (Gosip Murni)
             is_hard_blacklist = any(w in msg_lower for w in HARD_BLACKLIST)
-            
-            # Cek Operational Words (Laporan)
             is_operational = any(w in msg_lower for w in OPERATIONAL_WORDS)
             
-            # ATURAN JALUR UMUM:
-            # - Ada Trigger (Stok/Cek)
-            # - BUKAN Gosip Kasar (Hard Blacklist)
-            # - BUKAN Laporan Operasional
-            # - Kalimat Pendek
             if has_trigger_word and not is_hard_blacklist and not is_operational and len(words) <= 15:
                 trigger_found = True
-                print("[DEBUG] Trigger Jalur Umum (Auto Detect V29)", file=sys.stdout)
 
-        # 4. SAFETY CHECK AKHIR (THE SMART GATEKEEPER V.29)
+        # 4. SAFETY CHECK
         if trigger_found:
-            # A. Cek Part Number (VIP Pass - Selalu Boleh)
             has_part_number = re.search(r'\d+-[a-zA-Z0-9-]+', msg_lower)
-
-            # B. Cek Hard Blacklist (Pasti Blokir jika tanpa PN)
             is_hard_blacklist = any(w in msg_lower for w in HARD_BLACKLIST)
-
-            # C. Cek Soft Blacklist (Kah, Pak - Boleh lewat KALO ada kata Stok)
             is_soft_blacklist = any(w in msg_lower for w in SOFT_BLACKLIST)
             has_strong_trigger = any(w in words for w in UNIVERSAL_KEYWORDS)
 
             if has_part_number:
-                trigger_found = True # Lolos VIP
+                trigger_found = True
             elif is_hard_blacklist:
-                trigger_found = False # Blokir Gosip Kasar
-                print(f"[DEBUG] BLOCKED: Hard Blacklist", file=sys.stdout)
-            elif is_soft_blacklist and not has_strong_trigger:
-                # Contoh: "Laden, kopi mana kah?" (Gak ada kata stok, ada kah) -> BLOKIR
                 trigger_found = False
-                print(f"[DEBUG] BLOCKED: Soft Blacklist without Stock Trigger", file=sys.stdout)
-            # Kalau (Soft Blacklist + Ada Trigger Stok) -> LOLOS ("Stok filter oli kah?")
+            elif is_soft_blacklist and not has_strong_trigger:
+                trigger_found = False
 
         # 5. EKSEKUSI
         if trigger_found:
@@ -423,7 +410,9 @@ def webhook():
             final_reply = ""
             is_batch = len(valid_searches) > 1
             
-            # SAVE SESSION UTK SINGLE SEARCH (Fix Pagination)
+            # --- V.31 FIXED HEADER MULTI-ITEM ---
+            if is_batch: final_reply += "📦 *Hasil Pencarian Multi-Item:*\n\n"
+            
             if not is_batch:
                 USER_SESSIONS[sender_id] = {'keyword': valid_searches[0], 'page': 0}
 
