@@ -22,7 +22,7 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (Sama seperti V.24) ---
+# --- KAMUS PINTAR ---
 KAMUS_SINONIM = {
     "wipol": "wypall", "wypal": "wypall", "waipol": "wypall",
     "hendel": "handle", "handel": "handle",
@@ -49,13 +49,12 @@ KAMUS_SINONIM = {
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
 }
 
-# --- KONFIGURASI FILTER KATA (UPDATED V.26) ---
+# --- KONFIGURASI FILTER KATA ---
 TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
 UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"]
 
-# DAFTAR KATA TERLARANG (ANTI SPAM & ANTI GOSIP)
 BLACKLIST_WORDS = [
-    # Kata Operasional (Biar gak nyaut laporan)
+    # Operasional
     "lambung", "cn", "sn", "hm", "km", "engine", 
     "unit", "dt", "hd", "lv", "gd", "dozer", "grader", 
     "mekanik", "driver", "operator", "breakdown", "rfu", "schedule", 
@@ -65,7 +64,7 @@ BLACKLIST_WORDS = [
     "absen", "lokasi", "posisi", "cuaca", "shift",
     "edit", "besok", "kemarin", "lusa", "ntar", "dicek", "di cek",
     
-    # Kata Percakapan / Basa-basi (ANTI GOSIP - BARU V.26)
+    # Percakapan (Anti Gosip)
     "senggol", "colek", "biar", "dulu", "dong", "tuh", "nih", "dijawab", 
     "jawab", "cuy", "woi", "halo", "test", "tes", "wkwk", "haha",
     "rajin", "pinter", "bodoh", "goblok", "lemot", "rusak", "error", 
@@ -111,7 +110,7 @@ def normalize_pn(text):
     return t
 
 def smart_clean_keyword(text):
-    text_clean = text.replace("?", "").replace("!", "") # Buang tanda tanya/seru
+    text_clean = text.replace("?", "").replace("!", "")
     text_clean = re.sub(r'@[a-zA-Z0-9]+', '', text_clean)
     has_digit = any(char.isdigit() for char in text_clean)
     
@@ -141,7 +140,6 @@ def get_data_lightweight():
         if not raw_rows: return []
         headers = [h.strip().lower() for h in raw_rows[0]]
         
-        # Mapping Index (Flexible)
         idx_desc = next((i for i, h in enumerate(headers) if "desc" in h), -1)
         idx_mat  = next((i for i, h in enumerate(headers) if "material" in h and "desc" not in h), -1)
         idx_qty  = next((i for i, h in enumerate(headers) if "total" in h or "stock" in h or "unrestricted" in h), -1)
@@ -186,7 +184,6 @@ def cari_stok(raw_keyword):
     clean_keyword = smart_clean_keyword(raw_keyword).lower().strip()
     if not clean_keyword: return "⚠️ _Maaf, kata kuncinya kurang jelas pak._"
 
-    # Logika Hybrid (Sama seperti V.24)
     kata_kata = clean_keyword.split()
     kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
     keyword_search = " ".join(kata_baru)
@@ -210,7 +207,6 @@ def cari_stok(raw_keyword):
         if match_desc or match_mat:
             hasil.append(item)
 
-    # Auto Correct
     pesan_koreksi = ""
     if not hasil:
         all_names = list(set([d['desc'] for d in data]))
@@ -222,7 +218,6 @@ def cari_stok(raw_keyword):
 
     if not hasil: return f"🙏 Stok *'{keyword_search}'* boten wonten."
 
-    # Logic Tampilan Ringkas
     unik_mat_list = []
     seen = set()
     for x in hasil:
@@ -241,7 +236,6 @@ def cari_stok(raw_keyword):
         m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
         h_qty = sum(x['qty'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         
-        # Lokasi Bin
         locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper())
         locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper())
         
@@ -250,7 +244,6 @@ def cari_stok(raw_keyword):
 
         pesan += f"*{nama_barang}*\nMat: {mat_id}\nMining : {int(m_qty)} | Hauling : {int(h_qty)}\n({str_loc_m} | {str_loc_h})\n\n"
 
-    # Footer Waktu
     waktu_update_data = "Live via Google Sheet" 
     for h in hasil:
         if h['last_update']:
@@ -261,7 +254,7 @@ def cari_stok(raw_keyword):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V26 (ANTI GOSIP) RUNNING"
+def home(): return "LADEN V27 (PART NUMBER PRIORITY) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -278,56 +271,57 @@ def webhook():
         
         trigger_found = False
         
-        # 1. CEK TAG LANGSUNG (Prioritas Tinggi)
+        # --- LOGIKA V27: DETECTION ---
+        
+        # 1. CEK TAG LANGSUNG (VIP)
         is_direct_call = False
         if msg_lower.startswith("@"):
-            # Misal: @Laden stok baut (Dianggap perintah valid)
             parts = msg_lower.split(" ", 1)
             first_word = parts[0]
             for my_name in MY_BOT_NAME_KEYWORDS:
                 if my_name in first_word: is_direct_call = True
-            
-            # Cek kalau di-tag pakai nomor WA (biasanya 628...)
             if "628" in first_word and len(first_word) > 10: is_direct_call = True
-            
             if is_direct_call: trigger_found = True
 
-        # 2. CEK NAMA DEPAN (Prioritas Tinggi)
+        # 2. CEK NAMA DEPAN (VIP)
         elif any(msg_lower.startswith(name) for name in MY_BOT_NAME_KEYWORDS):
             trigger_found = True
 
-        # 3. CEK TRIGGER LAMA (Prioritas Sedang)
+        # 3. CEK TRIGGER LAMA (Normal)
         if not trigger_found:
             for trig in TRIGGERS_LAMA:
                 if trig in msg_lower:
                     trigger_found = True
                     break
 
-        # 4. JALUR UMUM (Prioritas Rendah - RAWAN SPAM)
+        # 4. JALUR UMUM (OTOMATIS) DENGAN VIP PASS PART NUMBER
         if not trigger_found:
             has_trigger_word = any(w in words for w in UNIVERSAL_KEYWORDS)
-            
-            # --- FILTER BARU V.26 (ANTI GOSIP) ---
-            # Cek apakah ada kata-kata blacklist di dalam kalimat
             is_operational = any(w in msg_lower for w in BLACKLIST_WORDS)
-            is_short_message = len(words) <= 7 
-
-            # HANYA JAWAB JIKA: Ada kata 'stok', BUKAN kalimat operasional/gosip, dan kalimat pendek.
-            if has_trigger_word and not is_operational and is_short_message:
+            
+            # --- FITUR BARU V27: DETEKSI PART NUMBER ---
+            # Pola: Angka diikuti strip lalu angka/huruf (minimal 3 karakter setelah strip)
+            # Contoh match: 07000-F3038, 561-02-00010
+            has_part_number = re.search(r'\d+-[a-zA-Z0-9-]+', msg_lower)
+            
+            # ATURAN: 
+            # Jika ada Part Number -> ABAIKAN BLACKLIST (VIP PASS)
+            if has_trigger_word and has_part_number:
                 trigger_found = True
-                print("[DEBUG] Trigger Jalur Umum (Auto Detect)", file=sys.stdout)
-            else:
-                if has_trigger_word and is_operational:
-                    print(f"[DEBUG] Dibatalkan Blacklist: {message}", file=sys.stdout)
+                print("[DEBUG] Trigger Jalur Umum (VIP Part Number)", file=sys.stdout)
+            
+            # Jika TIDAK ADA Part Number -> Terapkan Aturan Ketat (Anti Gosip)
+            elif has_trigger_word and not is_operational and len(words) <= 10:
+                trigger_found = True
+                print("[DEBUG] Trigger Jalur Umum (Normal)", file=sys.stdout)
 
         # --- EKSEKUSI ---
         if trigger_found:
-            # Bersihkan trigger word dari pesan
             clean_msg = message
             for trig in TRIGGERS_LAMA + UNIVERSAL_KEYWORDS + MY_BOT_NAME_KEYWORDS:
                 clean_msg = re.sub(r'\b'+trig+r'\b', '', clean_msg, flags=re.IGNORECASE)
             
-            clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', clean_msg) # Hapus tag
+            clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', clean_msg)
             
             jawaban = cari_stok(clean_msg)
             requests.post(
