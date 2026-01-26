@@ -22,13 +22,10 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (V.31 SINONIM) ---
+# --- KAMUS PINTAR ---
 KAMUS_SINONIM = {
-    # Update Wypall -> Wipers (Agar match dengan JUMBO ROLL WIPERS)
     "wipol": "wipers", "wypal": "wipers", "waipol": "wipers", 
     "wypall": "wipers", "wipal": "wipers", "jumbo": "wipers",
-    
-    # Sinonim Lama
     "hendel": "handle", "handel": "handle",
     "sok": "shock", "sox": "shock",
     "breket": "bracket", "briket": "bracket",
@@ -53,23 +50,23 @@ KAMUS_SINONIM = {
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
 }
 
-# --- KONFIGURASI FILTER KATA (V.31) ---
+# --- KONFIGURASI FILTER KATA (V.32 ANTI SPAM UPGRADE) ---
 TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
 UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"]
 
-# 1. HARD BLACKLIST (PASTI GOSIP -> BLOKIR TOTAL)
-# "Bang", "Pak", "Bu" SUDAH DIHAPUS dari sini agar tidak memblokir perintah
+# 1. HARD BLACKLIST (PASTI DIAM)
+# Tambahan: "maksudnya" (untuk kasus 'ini maksudnya pak de umam')
 HARD_BLACKLIST = [
     "senggol", "colek", "biar", "dulu", "dijawab", 
     "jawab", "cuy", "woi", "halo", "test", "tes", "wkwk", "haha",
     "rajin", "pinter", "bodoh", "goblok", "lemot", "rusak", "error", 
-    "lur", "gan", "mz", "lek"
+    "lur", "gan", "mz", "lek", "maksudnya", "dibantu", "bantu"
 ]
 
-# 2. SOFT BLACKLIST (SAMBUNGAN BIASA -> BOLEH LEWAT KALAU ADA KATA 'STOK')
+# 2. SOFT BLACKLIST (Boleh lewat KALO ada kata 'Stok' di AWAL kalimat)
 SOFT_BLACKLIST = [
     "pak", "bu", "om", "kah", "kok", "sih", "dong", "tuh", "nih", 
-    "ready", "aman", "ada", "bang", "mas", "mba", "kak"
+    "ready", "aman", "ada", "bang", "mas", "mba", "kak", "gantine"
 ]
 
 # 3. OPERATIONAL
@@ -84,8 +81,8 @@ OPERATIONAL_WORDS = [
     "edit", "besok", "kemarin", "lusa", "ntar", "dicek", "di cek"
 ]
 
-# --- V.31: STOP WORDS DIPERBANYAK ---
-# Kata-kata ini akan DIHAPUS sebelum pencarian agar tidak mengganggu
+# --- STOP WORDS (KATA SAMPAH YANG DIHAPUS) ---
+# V.32: Ditambah banyak kata agar pencarian bersih dari "sampah" chat
 STOP_WORDS = [
     "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", 
     "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", 
@@ -93,9 +90,11 @@ STOP_WORDS = [
     "bantu", "mohon", "coba", "tolongin", "mba", "kak", "sist", "gan",
     "laden", "bot", "den", "min", "admin", "beta", "tes",
     "sent", "via", "fonnte", "com",
-    # TAMBAHAN PEMBERSIH BARU (V.31)
+    # V.32 ADDITIONS (Pembersih Chat):
     "ukuran", "saja", "nya", "yang", "mana", "tipe", "type", "jenis", "model",
-    "merk", "brand", "butuh", "perlu", "punya", "pake", "pakai"
+    "merk", "brand", "butuh", "perlu", "punya", "pake", "pakai",
+    "pakde", "pakdhe", "lurr", "lur", "gantine", "ut", "mtw", "komplit", "udh", "sudah",
+    "ini", "itu", "disini", "disitu", "wae", "bawa", "balik"
 ]
 
 GENERIC_ITEMS = ["baut", "bolt", "mur", "nut", "screw", "washer", "ring"]
@@ -146,7 +145,7 @@ def smart_clean_keyword(text):
     
     for w in words:
         w_lower = w.lower()
-        if w_lower in STOP_WORDS: continue # Di sini "ukuran", "saja" akan dibuang
+        if w_lower in STOP_WORDS: continue
         if has_digit and w_lower in GENERIC_ITEMS: continue
         if is_sap_document(w): continue 
         
@@ -218,8 +217,11 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
 
+    # V.32 Clean Keyword yang sangat kuat
     clean_keyword_step1 = smart_clean_keyword(raw_keyword.strip())
-    if not clean_keyword_step1: return "" 
+    
+    # Jika setelah dibersihkan hasilnya kosong (misal cuma "cek om"), return kosong
+    if not clean_keyword_step1 or len(clean_keyword_step1) < 2: return "" 
 
     clean_keyword = clean_keyword_step1.lower().strip()
     kata_kata = clean_keyword.split()
@@ -318,7 +320,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V31 (CLEAN KEYWORD + WYPALL FIX) RUNNING"
+def home(): return "LADEN V32 (ANTI SPAM & CONVERSATION FILTER) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -369,10 +371,14 @@ def webhook():
         # 3. JALUR UMUM (AUTO DETECT)
         if not trigger_found:
             has_trigger_word = any(w in words for w in UNIVERSAL_KEYWORDS)
+            
+            # Filter V.32: Jika ada "di stok" atau "di stock" -> Abaikan (Itu kalimat pasif/tempat)
+            has_passive_stock = re.search(r'\bdi\s+stok', msg_lower) or re.search(r'\bdi\s+stock', msg_lower)
+            
             is_hard_blacklist = any(w in msg_lower for w in HARD_BLACKLIST)
             is_operational = any(w in msg_lower for w in OPERATIONAL_WORDS)
             
-            if has_trigger_word and not is_hard_blacklist and not is_operational and len(words) <= 15:
+            if has_trigger_word and not is_hard_blacklist and not is_operational and not has_passive_stock and len(words) <= 15:
                 trigger_found = True
 
         # 4. SAFETY CHECK
@@ -381,11 +387,14 @@ def webhook():
             is_hard_blacklist = any(w in msg_lower for w in HARD_BLACKLIST)
             is_soft_blacklist = any(w in msg_lower for w in SOFT_BLACKLIST)
             has_strong_trigger = any(w in words for w in UNIVERSAL_KEYWORDS)
+            
+            # V.32: Cek apakah kalimat diawali "bisa dibantu" atau "maksudnya" (Indikasi percakapan)
+            is_conversation = message.lower().startswith("bisa dibantu") or message.lower().startswith("maksudnya")
 
             if has_part_number:
                 trigger_found = True
-            elif is_hard_blacklist:
-                trigger_found = False
+            elif is_hard_blacklist or is_conversation:
+                trigger_found = False # Blokir percakapan
             elif is_soft_blacklist and not has_strong_trigger:
                 trigger_found = False
 
@@ -401,7 +410,7 @@ def webhook():
             valid_searches = []
             for line in raw_lines:
                 cleaned_line = smart_clean_keyword(line)
-                if cleaned_line: 
+                if cleaned_line and len(cleaned_line) > 1: # Pastikan tidak kosong
                     valid_searches.append(cleaned_line)
             
             if not valid_searches:
@@ -410,7 +419,6 @@ def webhook():
             final_reply = ""
             is_batch = len(valid_searches) > 1
             
-            # --- V.31 FIXED HEADER MULTI-ITEM ---
             if is_batch: final_reply += "📦 *Hasil Pencarian Multi-Item:*\n\n"
             
             if not is_batch:
