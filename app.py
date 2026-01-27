@@ -22,12 +22,13 @@ CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {} 
 
-# --- KAMUS PINTAR (V.33 FIX WYPALL) ---
+# --- KAMUS PINTAR ---
 KAMUS_SINONIM = {
-    # V.33: Wipol di-map ke "JUMBO" agar kena sasaran "JUMBO ROLL"
+    # Wypall Fix
     "wipol": "jumbo", "wypal": "jumbo", "waipol": "jumbo", 
     "wypall": "jumbo", "wipal": "jumbo", "jumbo": "jumbo",
     
+    # Standard
     "hendel": "handle", "handel": "handle",
     "sok": "shock", "sox": "shock",
     "breket": "bracket", "briket": "bracket",
@@ -52,23 +53,21 @@ KAMUS_SINONIM = {
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
 }
 
-# --- KONFIGURASI FILTER KATA (V.33 STRICT MODE) ---
+# --- TRIGGER UTAMA (Pastikan CEK ada disini) ---
 TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
-UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"]
+UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"] # "Cek" wajib ada agar "Cek Epodur" jalan
 
-# 1. HARD BLACKLIST (PASTI DIAM - BERDASARKAN SCREENSHOT BAPAK)
+# 1. HARD BLACKLIST (PASTI DIAM)
 HARD_BLACKLIST = [
     "senggol", "colek", "biar", "dulu", "dijawab", 
     "jawab", "cuy", "woi", "halo", "test", "tes", "wkwk", "haha",
     "rajin", "pinter", "bodoh", "goblok", "lemot", "rusak", "error", 
     "lur", "gan", "mz", "lek", 
-    # Tambahan V.33 (Dari kasus grup)
     "maksudnya", "maksud", "dibantu", "bantu", "tulung", "tolong", 
-    "bawa", "balik", "wae", "fisik"
+    "bawa", "balik", "wae", "fisik", "nggeh"
 ]
 
-# 2. SOFT BLACKLIST (Kata Sambung)
-# Jika kalimat PANJANG (> 5 kata) mengandung ini, akan DIBLOKIR.
+# 2. SOFT BLACKLIST (Boleh lewat KALO ada kata 'Stok')
 SOFT_BLACKLIST = [
     "pak", "bu", "om", "kah", "kok", "sih", "dong", "tuh", "nih", 
     "ready", "aman", "ada", "bang", "mas", "mba", "kak", "gantine",
@@ -87,8 +86,8 @@ OPERATIONAL_WORDS = [
     "edit", "besok", "kemarin", "lusa", "ntar", "dicek", "di cek"
 ]
 
-# --- STOP WORDS (PEMBERSIH KATA) ---
-# V.33: Ditambah bahasa Jawa & Singkatan agar pencarian bersih
+# --- STOP WORDS (PEMBERSIH KATA SAMPAH) ---
+# Kata-kata ini akan DIHAPUS. Jika sisanya kosong, Bot DIAM.
 STOP_WORDS = [
     "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", 
     "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", 
@@ -96,12 +95,13 @@ STOP_WORDS = [
     "bantu", "mohon", "coba", "tolongin", "mba", "kak", "sist", "gan",
     "laden", "bot", "den", "min", "admin", "beta", "tes",
     "sent", "via", "fonnte", "com",
-    # V.33 ADDITIONS (Pembersih Chat):
+    
+    # FILTER BARU (V.34) - Sesuai Screenshot Bapak:
     "ukuran", "saja", "nya", "yang", "mana", "tipe", "type", "jenis", "model",
     "merk", "brand", "butuh", "perlu", "punya", "pake", "pakai",
     "pakde", "pakdhe", "lurr", "lur", "gantine", "ut", "mtw", "komplit", "udh", "sudah",
-    "ini", "itu", "disini", "disitu", "wae", "bawa", "balik",
-    "ra", "enek", "fisik", "tulung"
+    "ini", "itu", "disini", "disitu", "wae", "bawa", "balik", "ruwedyy",
+    "ra", "enek", "fisik", "tulung", "nggeh", "matnum", "punya", "vcs", "volvo", "pg", "plus"
 ]
 
 GENERIC_ITEMS = ["baut", "bolt", "mur", "nut", "screw", "washer", "ring"]
@@ -152,7 +152,7 @@ def smart_clean_keyword(text):
     
     for w in words:
         w_lower = w.lower()
-        if w_lower in STOP_WORDS: continue
+        if w_lower in STOP_WORDS: continue # Kata sampah dibuang disini
         if has_digit and w_lower in GENERIC_ITEMS: continue
         if is_sap_document(w): continue 
         
@@ -224,9 +224,10 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
 
+    # V.34: Pembersih Super Kuat
     clean_keyword_step1 = smart_clean_keyword(raw_keyword.strip())
     
-    # Jika setelah dibersihkan hasilnya terlalu pendek (< 2 huruf), anggap tidak valid
+    # Jika sisanya kosong/pendek (misal: "cek ut pakde" -> "" -> DIAM)
     if not clean_keyword_step1 or len(clean_keyword_step1) < 2: return "" 
 
     clean_keyword = clean_keyword_step1.lower().strip()
@@ -326,7 +327,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V33 (STRICT MODE & JUMBO WIPOL) RUNNING"
+def home(): return "LADEN V34 (EPODUR FIX & CLEANER) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -378,7 +379,7 @@ def webhook():
         if not trigger_found:
             has_trigger_word = any(w in words for w in UNIVERSAL_KEYWORDS)
             
-            # Cek "di stok" (Kalimat pasif/lokasi)
+            # Cek "di stok"
             has_passive_stock = re.search(r'\bdi\s+sto[ck]', msg_lower)
             
             is_hard_blacklist = any(w in msg_lower for w in HARD_BLACKLIST)
@@ -387,29 +388,23 @@ def webhook():
             if has_trigger_word and not is_hard_blacklist and not is_operational and not has_passive_stock and len(words) <= 15:
                 trigger_found = True
 
-        # 4. SAFETY CHECK (STRICT V.33)
+        # 4. SAFETY CHECK
         if trigger_found:
             has_part_number = re.search(r'\d+-[a-zA-Z0-9-]+', msg_lower)
             is_hard_blacklist = any(w in msg_lower for w in HARD_BLACKLIST)
             is_soft_blacklist = any(w in msg_lower for w in SOFT_BLACKLIST)
             has_strong_trigger = any(w in words for w in UNIVERSAL_KEYWORDS)
             
-            # Cek percakapan (bisa dibantu, maksudnya)
             is_conversation = message.lower().startswith("bisa dibantu") or "maksud" in message.lower()
-
-            # ATURAN V.33: KALIMAT PANJANG + SOFT BLACKLIST = GOSIP (Kecuali ada Part Number)
             is_long_sentence = len(words) > 5
             is_chatty = is_soft_blacklist and is_long_sentence
 
             if has_part_number:
-                trigger_found = True # VIP Pass
+                trigger_found = True 
             elif is_hard_blacklist or is_conversation:
-                trigger_found = False # Pasti Blokir
-                print(f"[DEBUG] BLOCKED V33: Hard/Conversation", file=sys.stdout)
+                trigger_found = False 
             elif is_chatty:
-                # Blokir: "Ini maksud nya pak umam ra enek stock ut kah" (Panjang + ada 'kah'/'nya')
                 trigger_found = False
-                print(f"[DEBUG] BLOCKED V33: Long Chatty Sentence", file=sys.stdout)
             elif is_soft_blacklist and not has_strong_trigger:
                 trigger_found = False
 
@@ -428,7 +423,6 @@ def webhook():
                 if cleaned_line and len(cleaned_line) > 1:
                     valid_searches.append(cleaned_line)
             
-            # Jika setelah dibersihkan tidak ada kata kunci valid (misal cuma stopword semua), jangan jawab
             if not valid_searches:
                 return jsonify({"status": "ignored"}), 200
                 
