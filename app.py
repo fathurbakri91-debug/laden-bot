@@ -53,9 +53,9 @@ KAMUS_SINONIM = {
     "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
 }
 
-# --- TRIGGER UTAMA (Pastikan CEK ada disini) ---
+# --- TRIGGER UTAMA ---
 TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
-UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"] # "Cek" wajib ada agar "Cek Epodur" jalan
+UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"] 
 
 # 1. HARD BLACKLIST (PASTI DIAM)
 HARD_BLACKLIST = [
@@ -74,7 +74,8 @@ SOFT_BLACKLIST = [
     "ini", "itu", "disini", "disitu", "nya"
 ]
 
-# 3. OPERATIONAL
+# 3. OPERATIONAL (BLOKIR AGAR TIDAK GANGGU LAPORAN)
+# V.35: Daftar ini sekarang diperiksa dengan mode "Whole Word" (Kata Utuh)
 OPERATIONAL_WORDS = [
     "lambung", "cn", "sn", "hm", "km", "engine", 
     "unit", "dt", "hd", "lv", "gd", "dozer", "grader", 
@@ -87,7 +88,6 @@ OPERATIONAL_WORDS = [
 ]
 
 # --- STOP WORDS (PEMBERSIH KATA SAMPAH) ---
-# Kata-kata ini akan DIHAPUS. Jika sisanya kosong, Bot DIAM.
 STOP_WORDS = [
     "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", 
     "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", 
@@ -96,7 +96,7 @@ STOP_WORDS = [
     "laden", "bot", "den", "min", "admin", "beta", "tes",
     "sent", "via", "fonnte", "com",
     
-    # FILTER BARU (V.34) - Sesuai Screenshot Bapak:
+    # FILTER BARU (V.35)
     "ukuran", "saja", "nya", "yang", "mana", "tipe", "type", "jenis", "model",
     "merk", "brand", "butuh", "perlu", "punya", "pake", "pakai",
     "pakde", "pakdhe", "lurr", "lur", "gantine", "ut", "mtw", "komplit", "udh", "sudah",
@@ -224,10 +224,8 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
 
-    # V.34: Pembersih Super Kuat
     clean_keyword_step1 = smart_clean_keyword(raw_keyword.strip())
     
-    # Jika sisanya kosong/pendek (misal: "cek ut pakde" -> "" -> DIAM)
     if not clean_keyword_step1 or len(clean_keyword_step1) < 2: return "" 
 
     clean_keyword = clean_keyword_step1.lower().strip()
@@ -327,7 +325,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     return pesan
 
 @app.route('/', methods=['GET'])
-def home(): return "LADEN V34 (EPODUR FIX & CLEANER) RUNNING"
+def home(): return "LADEN V35 (EPODUR FIX & WHOLE WORD CHECK) RUNNING"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -382,13 +380,21 @@ def webhook():
             # Cek "di stok"
             has_passive_stock = re.search(r'\bdi\s+sto[ck]', msg_lower)
             
+            # --- V.35 FIX: WHOLE WORD CHECK FOR OPERATIONAL ---
+            # Agar "po" dalam "epodur" tidak terbaca sebagai Purchase Order
+            is_operational = False
+            for op_word in OPERATIONAL_WORDS:
+                # Regex \bkata\b memastikan hanya kata utuh yang dicek
+                if re.search(r'\b' + re.escape(op_word) + r'\b', msg_lower):
+                    is_operational = True
+                    break
+
             is_hard_blacklist = any(w in msg_lower for w in HARD_BLACKLIST)
-            is_operational = any(w in msg_lower for w in OPERATIONAL_WORDS)
             
             if has_trigger_word and not is_hard_blacklist and not is_operational and not has_passive_stock and len(words) <= 15:
                 trigger_found = True
 
-        # 4. SAFETY CHECK
+        # 4. SAFETY CHECK (STRICT MODE V.35)
         if trigger_found:
             has_part_number = re.search(r'\d+-[a-zA-Z0-9-]+', msg_lower)
             is_hard_blacklist = any(w in msg_lower for w in HARD_BLACKLIST)
