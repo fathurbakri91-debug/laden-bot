@@ -77,7 +77,9 @@ KAMUS_SINONIM = {
     "inchi": "inch", 
     "cyl": "cylinder", 
     "silinder": "cylinder", 
-    "fuse": "fuse"
+    "fuse": "fuse",
+    "fatigue": "fatique",  # Jika user ketik pakai G, cari di database pakai Q
+    "fatique": "fatique"   # Jika user ketik pakai Q, tetap cari pakai Q
 }
 
 # --- MODE KETAT (STRICT MODE V.44) ---
@@ -86,11 +88,13 @@ CHATTY_WORDS = [
     "cara", "kenapa", "kok", "e", "nya", "sih", "dong", "tuh", "nih"
 ]
 
+# PENAMBAHAN FILTER ANTI-REPORT (V.4.14)
 HARD_BLACKLIST = [
     "senggol", "colek", "biar", "dijawab", "jawab", "halo", "test", "tes", 
     "wkwk", "haha", "rajin", "pinter", "bodoh", "goblok", "lemot", "rusak", 
     "error", "lur", "gan", "mz", "lek", "maksudnya", "maksud", "bawa", 
-    "balik", "wae", "fisik", "harga"
+    "balik", "wae", "fisik", "harga", "report", "daily", "taking", "siklus", 
+    "http", "https", "bit.ly", "update terbaru"
 ]
 
 COMMAND_WORDS = [
@@ -301,10 +305,8 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     words = [KAMUS_SINONIM.get(k, k) for k in clean_k.lower().split()]
     kw_search = " ".join(words)
 
-    # 1. Tarik Data EDJS di awal
     edjs_data = get_edjs_data()
 
-    # 2. Cari kecocokan di SAP
     hasil = []
     for item in data:
         match_desc = all(k in item['desc'].lower() for k in words)
@@ -312,7 +314,6 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         if match_desc or match_mat:
             hasil.append(item)
 
-    # 3. Cari kecocokan di EDJS (Crosscheck Logic Baru)
     edjs_matches = []
     for norm_pn, val in edjs_data.items():
         match_desc = all(k in str(val.get('desc', '')).lower() for k in words)
@@ -320,7 +321,6 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         if match_desc or match_pn:
             edjs_matches.append(val)
 
-    # 4. Kumpulkan Unique Items dari SAP
     unik_items = []
     seen = set()
     for x in hasil:
@@ -329,22 +329,19 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             unik_items.append(key)
             seen.add(key)
 
-    # 5. Suntikkan item yang HANYA ada di EDJS ke dalam daftar utama
     for val in edjs_matches:
         norm_val_pn = normalize_pn(val['pn'])
         pn_in_sap = any(normalize_pn(x['mat']) == norm_val_pn for x in hasil)
         
         if not pn_in_sap:
-            key = (val['pn'], "") # EDJS tidak punya batch internal
+            key = (val['pn'], "")
             if key not in seen:
                 unik_items.append(key)
                 seen.add(key)
 
-    # 6. Jika masih kosong, berarti benar-benar tidak ada di mana-mana
     if not unik_items:
         return f"🙏 Stok *'{clean_k}'* boten wonten."
 
-    # 7. Setup Pagination (Sekarang mencakup gabungan SAP & EDJS)
     total_items = len(unik_items)
     ITEMS_PER_PAGE = 10
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -357,14 +354,12 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     pesan = f"🙏 *Laden jawab ya...*\nPencarian: {kw_search.upper()} ({total_items} items)\n" if not is_batch else ""
     if not is_batch: pesan += f"📖 Halaman {page+1} dari {total_pages}\n------------------\n"
 
-    # 8. Render Pesan Dinamis
     for mat_id, b_val in current_items:
         grup = [x for x in hasil if x['mat'] == mat_id and x['batch'] == b_val]
         edjs_qty = edjs_data.get(normalize_pn(mat_id))
 
         if not grup and not edjs_qty: continue
 
-        # Penentuan Header Deskripsi (Prioritas SAP, jika kosong pakai EDJS)
         if grup:
             first = grup[0]
             desc_display = first['desc']
@@ -378,7 +373,6 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         pesan += f"*{desc_display}{batch_label}*\n"
         pesan += f"Mat : {mat_id}{spec_label}\n"
 
-        # Tampilkan Stok SAP
         if grup:
             SLOC_KOSONG = {"-", "", "nan", "none", "null"}
             sloc_set = set()
@@ -414,16 +408,11 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
 
                     pesan += f"SIS {sloc} - Mining : {m_str} | Hauling : {h_str}\n"
         else:
-            # Jika grup SAP kosong, berarti ini EDJS Only
             pesan += "SIS - 0\n"
 
-        # Tampilkan Stok EDJS
         if edjs_qty is not None:
             for loc, qty in edjs_qty['details'].items():
                 pesan += f"{loc} - {int(qty)}\n"
-        else:
-            # Default visibilitas absolut jika tidak ada histori di vendor sama sekali
-            pesan += "EDJS - 0\n"
 
         pesan += "------------------\n"
 
@@ -492,7 +481,7 @@ def proses_pesan(message, sender_id):
 
 @app.route('/', methods=['GET'])
 def home(): 
-    return "LADEN V.4.12 ACTIVE"
+    return "LADEN V.4.14 ACTIVE"
 
 @app.route('/test', methods=['POST'])
 @app.route('/webhook', methods=['POST'])
