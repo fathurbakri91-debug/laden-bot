@@ -172,7 +172,6 @@ def get_edjs_data():
         idx_pn = next((i for i, h in enumerate(headers) if "material" in h and "desc" not in h), -1)
         idx_desc = next((i for i, h in enumerate(headers) if "desc" in h), -1)
         idx_qty = next((i for i, h in enumerate(headers) if "stock" in h or "qty" in h), -1)
-        # DETEKSI LOKASI EDJS (V.4.10)
         idx_loc = next((i for i, h in enumerate(headers) if "loc" in h or "plant" in h), -1)
         
         if idx_pn == -1 or idx_qty == -1:
@@ -185,8 +184,6 @@ def get_edjs_data():
             
             pn_raw = str(row[idx_pn]).strip()
             pn_norm = normalize_pn(pn_raw)
-            
-            # Ambil nilai lokasi (EDJS Mining / EDJS Hauling / EDJS)
             loc = str(row[idx_loc]).strip() if idx_loc != -1 and len(row) > idx_loc else "EDJS"
             
             try: 
@@ -200,7 +197,6 @@ def get_edjs_data():
                 if pn_norm not in result:
                     result[pn_norm] = {'pn': pn_raw, 'desc': desc, 'details': {}}
                 
-                # Masukkan qty ke dalam dictionary lokasi spesifik
                 if loc not in result[pn_norm]['details']:
                     result[pn_norm]['details'][loc] = 0
                 result[pn_norm]['details'][loc] += qty
@@ -305,6 +301,10 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     words = [KAMUS_SINONIM.get(k, k) for k in clean_k.lower().split()]
     kw_search = " ".join(words)
 
+    # 1. Tarik Data EDJS di awal
+    edjs_data = get_edjs_data()
+
+    # 2. Cari kecocokan di SAP
     hasil = []
     for item in data:
         match_desc = all(k in item['desc'].lower() for k in words)
@@ -312,37 +312,15 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         if match_desc or match_mat:
             hasil.append(item)
 
-    # 1. Pindahkan panggilan EDJS ke atas
-    edjs_data = get_edjs_data()
+    # 3. Cari kecocokan di EDJS (Crosscheck Logic Baru)
+    edjs_matches = []
+    for norm_pn, val in edjs_data.items():
+        match_desc = all(k in str(val.get('desc', '')).lower() for k in words)
+        match_pn = kw_search in norm_pn
+        if match_desc or match_pn:
+            edjs_matches.append(val)
 
-    # 2. Logika Fallback Jika SAP Kosong
-    if not hasil:
-        edjs_matches = []
-        for norm_pn, val in edjs_data.items():
-            match_desc = all(k in str(val.get('desc', '')).lower() for k in words)
-            match_pn = kw_search in norm_pn
-            if match_desc or match_pn:
-                edjs_matches.append(val)
-                
-        # Jika di EDJS juga tidak ada, baru tolak
-        if not edjs_matches: 
-            return f"🙏 Stok *'{clean_k}'* boten wonten."
-
-        # Jika di EDJS ada, susun pesan khusus EDJS
-        pesan = f"🙏 *Laden jawab ya...*\nPencarian: {kw_search.upper()} (Hanya di Vendor)\n------------------\n"
-        for match in edjs_matches[:3]: 
-            desc_text = match['desc'] if match['desc'] and match['desc'] != match['pn'] else "Item Vendor"
-            pesan += f"*{desc_text}*\n"
-            pesan += f"Mat : {match['pn']}\n"
-            pesan += "SIS - 0\n"
-            # Cetak loop dinamis lokasi EDJS (V.4.10)
-            for loc, qty in match['details'].items():
-                if qty > 0:
-                    pesan += f"{loc} - {int(qty)}\n"
-            pesan += "------------------\n"
-        return pesan
-
-    # Kelompokkan per (mat, batch) untuk SAP
+    # 4. Kumpulkan Unique Items dari SAP
     unik_items = []
     seen = set()
     for x in hasil:
@@ -351,6 +329,22 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             unik_items.append(key)
             seen.add(key)
 
+    # 5. Suntikkan item yang HANYA ada di EDJS ke dalam daftar utama
+    for val in edjs_matches:
+        norm_val_pn = normalize_pn(val['pn'])
+        pn_in_sap = any(normalize_pn(x['mat']) == norm_val_pn for x in hasil)
+        
+        if not pn_in_sap:
+            key = (val['pn'], "") # EDJS tidak punya batch internal
+            if key not in seen:
+                unik_items.append(key)
+                seen.add(key)
+
+    # 6. Jika masih kosong, berarti benar-benar tidak ada di mana-mana
+    if not unik_items:
+        return f"🙏 Stok *'{clean_k}'* boten wonten."
+
+    # 7. Setup Pagination (Sekarang mencakup gabungan SAP & EDJS)
     total_items = len(unik_items)
     ITEMS_PER_PAGE = 10
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -363,58 +357,73 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     pesan = f"🙏 *Laden jawab ya...*\nPencarian: {kw_search.upper()} ({total_items} items)\n" if not is_batch else ""
     if not is_batch: pesan += f"📖 Halaman {page+1} dari {total_pages}\n------------------\n"
 
+    # 8. Render Pesan Dinamis
     for mat_id, b_val in current_items:
         grup = [x for x in hasil if x['mat'] == mat_id and x['batch'] == b_val]
-        if not grup: continue
+        edjs_qty = edjs_data.get(normalize_pn(mat_id))
 
-        first = grup[0]
-        batch_label = f" ({b_val})" if b_val else ""
-        spec_label = f" ({first['spec']})" if first['spec'] else ""
-        pesan += f"*{first['desc']}{batch_label}*\n"
+        if not grup and not edjs_qty: continue
+
+        # Penentuan Header Deskripsi (Prioritas SAP, jika kosong pakai EDJS)
+        if grup:
+            first = grup[0]
+            desc_display = first['desc']
+            batch_label = f" ({b_val})" if b_val else ""
+            spec_label = f" ({first['spec']})" if first['spec'] else ""
+        else:
+            desc_display = edjs_qty['desc'] if edjs_qty['desc'] else "Item Vendor"
+            batch_label = ""
+            spec_label = ""
+
+        pesan += f"*{desc_display}{batch_label}*\n"
         pesan += f"Mat : {mat_id}{spec_label}\n"
 
-        SLOC_KOSONG = {"-", "", "nan", "none", "null"}
-        sloc_set = set()
-        for x in grup:
-            s = x['sloc'].strip().upper() if x['sloc'] else ""
-            if s and s not in SLOC_KOSONG:
-                sloc_set.add(s)
-        slocs = sorted(sloc_set)
+        # Tampilkan Stok SAP
+        if grup:
+            SLOC_KOSONG = {"-", "", "nan", "none", "null"}
+            sloc_set = set()
+            for x in grup:
+                s = x['sloc'].strip().upper() if x['sloc'] else ""
+                if s and s not in SLOC_KOSONG:
+                    sloc_set.add(s)
+            slocs = sorted(sloc_set)
 
-        total_internal = int(sum(x['qty'] for x in grup
-                                 if '40AI' in x['plant'].upper() or '40AJ' in x['plant'].upper()))
+            total_internal = int(sum(x['qty'] for x in grup
+                                     if '40AI' in x['plant'].upper() or '40AJ' in x['plant'].upper()))
 
-        if not slocs or total_internal == 0:
-            pesan += "SIS - 0\n"
+            if not slocs or total_internal == 0:
+                pesan += "SIS - 0\n"
+            else:
+                for sloc in slocs:
+                    sloc_grup = [x for x in grup if x['sloc'].strip().upper() == sloc]
+
+                    m_items = [x for x in sloc_grup if '40AI' in x['plant'].upper()]
+                    h_items = [x for x in sloc_grup if '40AJ' in x['plant'].upper()]
+
+                    m_qty = int(sum(x['qty'] for x in m_items))
+                    h_qty = int(sum(x['qty'] for x in h_items))
+
+                    m_bins_list = sorted(set(clean_text(x['bin']) for x in m_items if clean_text(x['bin'])))
+                    h_bins_list = sorted(set(clean_text(x['bin']) for x in h_items if clean_text(x['bin'])))
+
+                    m_bin = ", ".join(m_bins_list) if m_bins_list else "-"
+                    h_bin = ", ".join(h_bins_list) if h_bins_list else "-"
+
+                    m_str = f"{m_qty} ({m_bin})" if m_bin != "-" else f"{m_qty} (-)"
+                    h_str = f"{h_qty} ({h_bin})" if h_bin != "-" else f"{h_qty} (-)"
+
+                    pesan += f"SIS {sloc} - Mining : {m_str} | Hauling : {h_str}\n"
         else:
-            for sloc in slocs:
-                sloc_grup = [x for x in grup if x['sloc'].strip().upper() == sloc]
+            # Jika grup SAP kosong, berarti ini EDJS Only
+            pesan += "SIS - 0\n"
 
-                m_items = [x for x in sloc_grup if '40AI' in x['plant'].upper()]
-                h_items = [x for x in sloc_grup if '40AJ' in x['plant'].upper()]
-
-                m_qty = int(sum(x['qty'] for x in m_items))
-                h_qty = int(sum(x['qty'] for x in h_items))
-
-                # Kumpulkan semua bin unik, abaikan yang kosong, lalu urutkan
-                m_bins_list = sorted(set(clean_text(x['bin']) for x in m_items if clean_text(x['bin'])))
-                h_bins_list = sorted(set(clean_text(x['bin']) for x in h_items if clean_text(x['bin'])))
-
-                # Gabungkan dengan koma jika ada lebih dari 1 bin
-                m_bin = ", ".join(m_bins_list) if m_bins_list else "-"
-                h_bin = ", ".join(h_bins_list) if h_bins_list else "-"
-
-                m_str = f"{m_qty} ({m_bin})" if m_bin != "-" else f"{m_qty} (-)"
-                h_str = f"{h_qty} ({h_bin})" if h_bin != "-" else f"{h_qty} (-)"
-                
-                pesan += f"SIS {sloc} - Mining : {m_str} | Hauling : {h_str}\n"
-
-        edjs_qty = edjs_data.get(normalize_pn(mat_id))
+        # Tampilkan Stok EDJS
         if edjs_qty is not None:
-            # Cetak loop dinamis lokasi EDJS (V.4.10)
             for loc, qty in edjs_qty['details'].items():
-                if qty > 0:
-                    pesan += f"{loc} - {int(qty)}\n"
+                pesan += f"{loc} - {int(qty)}\n"
+        else:
+            # Default visibilitas absolut jika tidak ada histori di vendor sama sekali
+            pesan += "EDJS - 0\n"
 
         pesan += "------------------\n"
 
@@ -483,7 +492,7 @@ def proses_pesan(message, sender_id):
 
 @app.route('/', methods=['GET'])
 def home(): 
-    return "LADEN V.4.10 ACTIVE"
+    return "LADEN V.4.12 ACTIVE"
 
 @app.route('/test', methods=['POST'])
 @app.route('/webhook', methods=['POST'])
