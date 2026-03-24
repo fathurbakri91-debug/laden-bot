@@ -221,6 +221,7 @@ def clean_text(text):
     return "" if t.lower() in ["nan", "none", "null", "-", "0", ""] else t
 
 def normalize_pn(text):
+    """Menghapus semua spasi dan simbol, menyisakan huruf dan angka"""
     if text is None: return ""
     t = str(text).lower()
     t = re.sub(r'[^a-z0-9]', '', t) 
@@ -304,21 +305,28 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     
     words = [KAMUS_SINONIM.get(k, k) for k in clean_k.lower().split()]
     kw_search = " ".join(words)
+    kw_search_norm = normalize_pn(kw_search) # V.4.15 Normalisasi keyword untuk pencarian akurat
 
     edjs_data = get_edjs_data()
 
+    # PENCARIAN DI SAP (V.4.15 DUAL MATCHING)
     hasil = []
     for item in data:
         match_desc = all(k in item['desc'].lower() for k in words)
-        match_mat = kw_search in item['mat'].lower()
-        if match_desc or match_mat:
+        match_mat = kw_search in item['mat'].lower() # Pencarian mentah (dengan strip)
+        match_mat_norm = (kw_search_norm in normalize_pn(item['mat'])) if kw_search_norm else False # Pencarian bersih
+        
+        if match_desc or match_mat or match_mat_norm:
             hasil.append(item)
 
+    # PENCARIAN DI EDJS/UT (V.4.15 DUAL MATCHING)
     edjs_matches = []
     for norm_pn, val in edjs_data.items():
         match_desc = all(k in str(val.get('desc', '')).lower() for k in words)
-        match_pn = kw_search in norm_pn
-        if match_desc or match_pn:
+        match_pn = kw_search in val['pn'].lower() # Pencarian mentah
+        match_pn_norm = (kw_search_norm in norm_pn) if kw_search_norm else False # Pencarian bersih
+        
+        if match_desc or match_pn or match_pn_norm:
             edjs_matches.append(val)
 
     unik_items = []
@@ -481,7 +489,7 @@ def proses_pesan(message, sender_id):
 
 @app.route('/', methods=['GET'])
 def home(): 
-    return "LADEN V.4.14 ACTIVE"
+    return "LADEN V.4.15 ACTIVE"
 
 @app.route('/test', methods=['POST'])
 @app.route('/webhook', methods=['POST'])
