@@ -11,154 +11,228 @@ import re
 
 app = Flask(__name__)
 
-# --- CONFIG ---
-FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN") 
+# ==========================================
+# 1. KONFIGURASI & MEMORY
+# ==========================================
+FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN") or "ISI_TOKEN_DISINI"
 SHEET_ID = "1GMQ15xaMpJokmyNeckO6PRxtajiRV4yHB1U0wirRcGU"
 MY_BOT_NAME_KEYWORDS = ["laden", "bot", "den", "min"] 
 
-# --- GLOBAL MEMORY ---
 CACHE_DATA = []      
 CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
-USER_SESSIONS = {} 
+USER_SESSIONS = {}
 
-# --- KAMUS PINTAR ---
+# --- EDJS VENDOR DATA ---
+CACHE_EDJS = {}
+CACHE_EDJS_TIMESTAMP = None
+
+# ==========================================
+# 2. DATABASE KATA (KAMUS & FILTER PINTAR)
+# ==========================================
 KAMUS_SINONIM = {
-    # Wypall Fix
-    "wipol": "jumbo", "wypal": "jumbo", "waipol": "jumbo", 
-    "wypall": "jumbo", "wipal": "jumbo", "jumbo": "jumbo",
-    
-    # Standard
-    "hendel": "handle", "handel": "handle",
-    "sok": "shock", "sox": "shock",
-    "breket": "bracket", "briket": "bracket",
-    "fiter": "filter", "filtir": "filter",
-    "hos": "hose", "hosing": "hose",
-    "sealtep": "seal tape", "siltep": "seal tape",
-    "ban": "tire", "tyre": "tire", 
-    "oli": "oil", "lube": "oil",
-    "aki": "battery", "accu": "battery",
-    "baut": "bolt", "mur": "nut", 
-    "laher": "bearing", "klem": "clamp", 
-    "oring": "o-ring", "o ring": "o-ring",
-    "pipa": "pipe", "paralon": "pipe",
-    "siku": "elbow", "knie": "elbow", "elbo": "elbow",
-    "keran": "valve", "kran": "valve", "balp": "valve",
-    "sambungan": "fitting", "konektor": "connector",
-    "kabel": "cable",
-    "lampu": "lamp", "bohlam": "bulb",
-    "las": "welding", "kawat": "wire",
-    "inci": "inch", "inchi": "inch",
-    "cyl": "cylinder", "silinder": "cylinder",
-    "fuse": "fuse", "sikring": "fuse", "sekring": "fuse"
+    "wipol": "jumbo", 
+    "wypal": "jumbo", 
+    "waipol": "jumbo", 
+    "wypall": "jumbo", 
+    "wipal": "jumbo", 
+    "jumbo": "jumbo",
+    "hendel": "handle", 
+    "handel": "handle", 
+    "sok": "shock", 
+    "sox": "shock", 
+    "breket": "bracket",
+    "fiter": "filter", 
+    "filtir": "filter", 
+    "hos": "hose", 
+    "hosing": "hose", 
+    "sealtep": "seal tape",
+    "ban": "tire", 
+    "tyre": "tire", 
+    "oli": "oil", 
+    "lube": "oil", 
+    "aki": "battery", 
+    "accu": "battery",
+    "baut": "bolt", 
+    "mur": "nut", 
+    "laher": "bearing", 
+    "klem": "clamp", 
+    "oring": "o-ring",
+    "pipa": "pipe", 
+    "paralon": "pipe", 
+    "siku": "elbow", 
+    "knie": "elbow", 
+    "elbo": "elbow",
+    "keran": "valve", 
+    "kran": "valve", 
+    "balp": "valve", 
+    "sambungan": "fitting", 
+    "konektor": "connector",
+    "kabel": "cable", 
+    "lampu": "lamp", 
+    "bohlam": "bulb", 
+    "las": "welding", 
+    "kawat": "wire",
+    "inci": "inch", 
+    "inchi": "inch", 
+    "cyl": "cylinder", 
+    "silinder": "cylinder", 
+    "fuse": "fuse"
 }
 
-# --- TRIGGER UTAMA ---
-TRIGGERS_LAMA = ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok"]
-UNIVERSAL_KEYWORDS = ["stok", "stock", "cek"] 
+# --- MODE KETAT (STRICT MODE V.44) ---
+CHATTY_WORDS = [
+    "otomatis", "iso", "kah", "apakah", "gimana", "bagaimana", 
+    "cara", "kenapa", "kok", "e", "nya", "sih", "dong", "tuh", "nih"
+]
 
-# 1. HARD BLACKLIST (PASTI DIAM)
 HARD_BLACKLIST = [
-    "senggol", "colek", "biar", "dulu", "dijawab", 
-    "jawab", "cuy", "woi", "halo", "test", "tes", "wkwk", "haha",
-    "rajin", "pinter", "bodoh", "goblok", "lemot", "rusak", "error", 
-    "lur", "gan", "mz", "lek", 
-    "maksudnya", "maksud", "dibantu", "bantu", "tulung", "tolong", 
-    "bawa", "balik", "wae", "fisik", "nggeh"
+    "senggol", "colek", "biar", "dijawab", "jawab", "halo", "test", "tes", 
+    "wkwk", "haha", "rajin", "pinter", "bodoh", "goblok", "lemot", "rusak", 
+    "error", "lur", "gan", "mz", "lek", "maksudnya", "maksud", "bawa", 
+    "balik", "wae", "fisik", "harga"
 ]
 
-# 2. SOFT BLACKLIST (Boleh lewat KALO ada kata 'Stok')
-SOFT_BLACKLIST = [
-    "pak", "bu", "om", "kah", "kok", "sih", "dong", "tuh", "nih", 
-    "ready", "aman", "ada", "bang", "mas", "mba", "kak", "gantine",
-    "ini", "itu", "disini", "disitu", "nya"
+COMMAND_WORDS = [
+    "cek", "stok", "stock", "laden", "bot", "tanya", "carikan", "min", "den"
 ]
 
-# 3. OPERATIONAL (BLOKIR AGAR TIDAK GANGGU LAPORAN)
-# V.35: Daftar ini sekarang diperiksa dengan mode "Whole Word" (Kata Utuh)
-OPERATIONAL_WORDS = [
-    "lambung", "cn", "sn", "hm", "km", "engine", 
-    "unit", "dt", "hd", "lv", "gd", "dozer", "grader", 
-    "mekanik", "driver", "operator", "breakdown", "rfu", "schedule", 
-    "service", "perbaikan", "laporan", "kondisi", "wo", "pr", "po",
-    "siap", "standby", "monitor", "copy", "rogger", "86",
-    "update", "urung", "belum", "lagi", "merapat", "info", "progress", "nanya",
-    "absen", "lokasi", "posisi", "cuaca", "shift",
-    "edit", "besok", "kemarin", "lusa", "ntar", "dicek", "di cek"
-]
-
-# --- STOP WORDS (PEMBERSIH KATA SAMPAH) ---
 STOP_WORDS = [
-    "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "gak", "nggak", 
-    "brp", "berapa", "harga", "minta", "tolong", "liat", "lihat", 
-    "kah", "ya", "bisa", "pak", "mas", "bang", "bu", "om", "lek", 
-    "bantu", "mohon", "coba", "tolongin", "mba", "kak", "sist", "gan",
-    "laden", "bot", "den", "min", "admin", "beta", "tes",
-    "sent", "via", "fonnte", "com",
-    
-    # FILTER BARU (V.35)
-    "ukuran", "saja", "nya", "yang", "mana", "tipe", "type", "jenis", "model",
-    "merk", "brand", "butuh", "perlu", "punya", "pake", "pakai",
-    "pakde", "pakdhe", "lurr", "lur", "gantine", "ut", "mtw", "komplit", "udh", "sudah",
-    "ini", "itu", "disini", "disitu", "wae", "bawa", "balik", "ruwedyy",
-    "ra", "enek", "fisik", "tulung", "nggeh", "matnum", "punya", "vcs", "volvo", "pg", "plus"
+    "stok", "stock", "ready", "cek", "cari", "tanya", "ada", "ga", "gak", 
+    "nggak", "ya", "punya", "punyane", "brp", "berapa", "minta", "tolong", 
+    "liat", "lihat", "bisa", "pak", "mas", "bang", "bu", "om", "lek", "bantu", 
+    "mohon", "coba", "tolongin", "mba", "kak", "sist", "gan", "dibantu", "dulu",
+    "laden", "bot", "den", "min", "admin", "nya", "yang", "mana", "tipe", 
+    "type", "jenis", "model", "stoknya", "ut", "mtw", "komplit", "udh", "sudah", 
+    "ini", "itu", "disini", "disitu"
 ]
 
 GENERIC_ITEMS = ["baut", "bolt", "mur", "nut", "screw", "washer", "ring"]
+
+# ==========================================
+# 3. FUNGSI LOGIKA (CORE ENGINE)
+# ==========================================
 
 def log(message):
     print(f"[LOG] {message}", file=sys.stdout, flush=True)
 
 def connect_google_sheet():
     json_creds = os.environ.get("GOOGLE_JSON_KEY")
-    if not json_creds: return None
     try:
-        creds_dict = json.loads(json_creds)
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        return client.open_by_key(SHEET_ID).sheet1
+        if json_creds:
+            creds_dict = json.loads(json_creds)
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        elif os.path.exists("kunci_rahasia.json"):
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = ServiceAccountCredentials.from_json_keyfile_name("kunci_rahasia.json", scope)
+        else: 
+            return None
+        return gspread.authorize(creds).open_by_key(SHEET_ID).sheet1
     except Exception as e:
         log(f"Error GSheet: {e}")
         return None
 
+def get_edjs_data():
+    global CACHE_EDJS, CACHE_EDJS_TIMESTAMP
+    now = datetime.now()
+    
+    if CACHE_EDJS and CACHE_EDJS_TIMESTAMP and (now - CACHE_EDJS_TIMESTAMP).total_seconds() < CACHE_DURATION:
+        return CACHE_EDJS
+        
+    log("🔄 Download Data EDJS dari Cloud...")
+    try:
+        json_creds = os.environ.get("GOOGLE_JSON_KEY")
+        if json_creds:
+            creds_dict = json.loads(json_creds)
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        elif os.path.exists("kunci_rahasia.json"):
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = ServiceAccountCredentials.from_json_keyfile_name("kunci_rahasia.json", scope)
+        else: 
+            log("⚠️ Kunci rahasia JSON tidak ditemukan!")
+            return CACHE_EDJS
+
+        client = gspread.authorize(creds)
+        
+        try:
+            sheet = client.open_by_key(SHEET_ID).worksheet("EDJS")
+        except gspread.exceptions.WorksheetNotFound:
+            log("⚠️ Tab bernama 'EDJS' TIDAK DITEMUKAN di Spreadsheet!")
+            return CACHE_EDJS
+            
+        raw_rows = sheet.get_all_values()
+        
+        if len(raw_rows) < 2:
+            return CACHE_EDJS
+            
+        headers = [str(h).strip().lower() for h in raw_rows[0]]
+        
+        idx_pn = next((i for i, h in enumerate(headers) if "material" in h and "desc" not in h), -1)
+        idx_desc = next((i for i, h in enumerate(headers) if "desc" in h), -1)
+        idx_qty = next((i for i, h in enumerate(headers) if "stock" in h or "qty" in h), -1)
+        
+        if idx_pn == -1 or idx_qty == -1:
+            log("⚠️ Gagal menemukan kolom 'Material' atau 'Total Stock' di tab EDJS.")
+            return CACHE_EDJS
+            
+        result = {}
+        for row in raw_rows[1:]:
+            if len(row) <= max(idx_pn, idx_qty): continue
+            
+            pn_raw = str(row[idx_pn]).strip()
+            pn_norm = normalize_pn(pn_raw)
+            
+            try: 
+                qty = float(re.sub(r'[^\d.]', '', str(row[idx_qty])))
+            except ValueError: 
+                qty = 0.0
+                
+            desc = str(row[idx_desc]).strip() if idx_desc != -1 and len(row) > idx_desc else pn_raw
+            
+            if pn_norm and pn_raw.lower() not in ["nan", "", "none"]:
+                if pn_norm not in result:
+                    result[pn_norm] = {'qty': qty, 'pn': pn_raw, 'desc': desc}
+                else:
+                    result[pn_norm]['qty'] += qty
+                    
+        CACHE_EDJS = result
+        CACHE_EDJS_TIMESTAMP = now
+        log(f"✅ EDJS (Cloud) dimuat: {len(result)} item.")
+        return CACHE_EDJS
+        
+    except Exception as e:
+        log(f"💥 ERROR FATAL EDJS: {e}")
+        return CACHE_EDJS
+
+
 def clean_text(text):
-    if not text: return ""
+    if text is None: return ""
     t = str(text).strip()
-    if t.lower() in ["nan", "none", "null", "-", "0"]: return ""
-    return t
+    return "" if t.lower() in ["nan", "none", "null", "-", "0", ""] else t
 
 def normalize_pn(text):
+    if text is None: return ""
     t = str(text).lower()
     t = re.sub(r'[^a-z0-9]', '', t) 
-    t = t.replace('o', '0')         
-    return t
+    return t.replace('o', '0')
 
 def is_sap_document(word):
     clean_w = re.sub(r'[^0-9]', '', word)
-    if len(clean_w) != 10: return False
-    if clean_w.startswith("10") or clean_w.startswith("22") or clean_w.startswith("24") or clean_w.startswith("26"):
-        return True
-    return False
+    return len(clean_w) == 10 and clean_w.startswith(("10", "22", "24", "26"))
 
 def smart_clean_keyword(text):
-    if text.strip().startswith(">"): return "" 
+    if not text or text.strip().startswith(">"): return "" 
     text_clean = text.replace("?", "").replace("!", "").replace(",", " ").replace(".", " ").replace(":", "") 
     text_clean = re.sub(r'@[a-zA-Z0-9]+', '', text_clean)
-    has_digit = any(char.isdigit() for char in text_clean)
-    
     words = text_clean.split()
     final_words = []
     
     for w in words:
-        w_lower = w.lower()
-        if w_lower in STOP_WORDS: continue # Kata sampah dibuang disini
-        if has_digit and w_lower in GENERIC_ITEMS: continue
-        if is_sap_document(w): continue 
-        
-        final_words.append(w)
-        
-    if not final_words: return ""
+        if w.lower() not in STOP_WORDS and not is_sap_document(w):
+            final_words.append(w)
+            
     return " ".join(final_words)
 
 def get_data_lightweight():
@@ -172,290 +246,261 @@ def get_data_lightweight():
         sheet = connect_google_sheet()
         if not sheet: return []
         raw_rows = sheet.get_all_values()
-        if not raw_rows: return []
+        if len(raw_rows) < 2: return []
+        
         headers = [h.strip().lower() for h in raw_rows[0]]
         
-        idx_desc = next((i for i, h in enumerate(headers) if "desc" in h), -1)
-        idx_mat  = next((i for i, h in enumerate(headers) if "material" in h and "desc" not in h), -1)
-        idx_qty  = next((i for i, h in enumerate(headers) if "total" in h or "stock" in h or "unrestricted" in h), -1)
-        idx_plant = next((i for i, h in enumerate(headers) if "plant" in h), -1)
-        idx_bin = next((i for i, h in enumerate(headers) if "bin" in h), -1)
-        idx_spec = next((i for i, h in enumerate(headers) if "procurement" in h), -1)
-        idx_upd = next((i for i, h in enumerate(headers) if "update" in h), -1)
-        idx_batch = next((i for i, h in enumerate(headers) if "batch" in h), -1)
-
-        if idx_desc == -1 or idx_qty == -1: return []
+        idx = {
+            'desc': next((i for i, h in enumerate(headers) if "desc" in h), -1),
+            'mat': next((i for i, h in enumerate(headers) if "material" in h and "desc" not in h), -1),
+            'qty': next((i for i, h in enumerate(headers) if any(x in h for x in ["total", "stock", "unrestricted"])), -1),
+            'plant': next((i for i, h in enumerate(headers) if "plant" in h), -1),
+            'bin': next((i for i, h in enumerate(headers) if "bin" in h), -1),
+            'sloc': next((i for i, h in enumerate(headers) if any(x in h for x in ["location", "sloc", "lgort"])), -1),
+            'spec': next((i for i, h in enumerate(headers) if "procurement" in h), -1),
+            'upd': next((i for i, h in enumerate(headers) if "update" in h), -1),
+            'batch': next((i for i, h in enumerate(headers) if "batch" in h), -1)
+        }
 
         clean_data = []
         for row in raw_rows[1:]:
-            if len(row) <= idx_qty: continue
-            raw_qty = row[idx_qty]
-            try: qty_val = float(re.sub(r'[^\d.]', '', str(raw_qty)))
+            try: qty_val = float(re.sub(r'[^\d.]', '', str(row[idx['qty']])))
             except: qty_val = 0.0
-
-            item = {
-                'desc': str(row[idx_desc]).strip(),
-                'mat': str(row[idx_mat]).strip() if idx_mat != -1 else "-",
+                
+            clean_data.append({
+                'desc': str(row[idx['desc']]).strip() if idx['desc'] != -1 and len(row) > idx['desc'] else "-",
+                'mat': str(row[idx['mat']]).strip() if idx['mat'] != -1 and len(row) > idx['mat'] else "-",
                 'qty': qty_val,
-                'plant': str(row[idx_plant]).strip() if idx_plant != -1 else "-",
-                'bin': str(row[idx_bin]).strip() if idx_bin != -1 else "-",
-                'spec': clean_text(row[idx_spec]) if idx_spec != -1 else "",
-                'last_update': clean_text(row[idx_upd]) if idx_upd != -1 else "",
-                'batch': clean_text(row[idx_batch]) if idx_batch != -1 else ""
-            }
-            clean_data.append(item)
+                'plant': str(row[idx['plant']]).strip() if idx['plant'] != -1 and len(row) > idx['plant'] else "-",
+                'bin': str(row[idx['bin']]).strip() if idx['bin'] != -1 and len(row) > idx['bin'] else "-",
+                'sloc': str(row[idx['sloc']]).strip() if idx['sloc'] != -1 and len(row) > idx['sloc'] else "-",
+                'spec': clean_text(row[idx['spec']]) if idx['spec'] != -1 and len(row) > idx['spec'] else "",
+                'last_update': clean_text(row[idx['upd']]) if idx['upd'] != -1 and len(row) > idx['upd'] else "",
+                'batch': clean_text(row[idx['batch']]) if idx['batch'] != -1 and len(row) > idx['batch'] else ""
+            })
+            
         CACHE_DATA = clean_data
         CACHE_TIMESTAMP = now
         log(f"✅ Berhasil Cache {len(clean_data)} item.")
         return CACHE_DATA
-    except Exception as e:
-        log(f"⚠️ Gagal Download: {e}")
+    except Exception as e: 
+        log(f"⚠️ Gagal: {e}")
         return CACHE_DATA
-
-def get_general_update_time():
-    data = get_data_lightweight()
-    if not data: return "Unknown"
-    for item in data:
-        if item['last_update'] and len(item['last_update']) > 5:
-            return item['last_update']
-    return "Live via Google Sheet"
 
 def cari_stok(raw_keyword, page=0, is_batch=False):
     data = get_data_lightweight()
     if not data: return "⚠️ Gagal mengambil data server."
-
-    clean_keyword_step1 = smart_clean_keyword(raw_keyword.strip())
     
-    if not clean_keyword_step1 or len(clean_keyword_step1) < 2: return "" 
-
-    clean_keyword = clean_keyword_step1.lower().strip()
-    kata_kata = clean_keyword.split()
-    kata_baru = [KAMUS_SINONIM.get(k, k) for k in kata_kata]
-    keyword_search = " ".join(kata_baru)
-    keywords_split = keyword_search.split()
-    keyword_pn_clean = normalize_pn(keyword_search)
+    clean_k = smart_clean_keyword(raw_keyword)
+    if not clean_k or len(clean_k) < 2: return ""
+    
+    words = [KAMUS_SINONIM.get(k, k) for k in clean_k.lower().split()]
+    kw_search = " ".join(words)
 
     hasil = []
     for item in data:
-        match_desc = True
-        teks_desc = item['desc'].lower()
-        for k in keywords_split:
-            if k not in teks_desc:
-                match_desc = False
-                break
-        match_mat = False
-        if keyword_pn_clean in normalize_pn(item['mat']):
-            match_mat = True
+        match_desc = all(k in item['desc'].lower() for k in words)
+        match_mat = kw_search in item['mat'].lower()
         if match_desc or match_mat:
             hasil.append(item)
 
-    unik_mat_list = []
+    # 1. Pindahkan panggilan EDJS ke atas
+    edjs_data = get_edjs_data()
+
+    # 2. Logika Fallback Jika SAP Kosong
+    if not hasil:
+        edjs_matches = []
+        for norm_pn, val in edjs_data.items():
+            match_desc = all(k in str(val.get('desc', '')).lower() for k in words)
+            match_pn = kw_search in norm_pn
+            if match_desc or match_pn:
+                edjs_matches.append(val)
+                
+        # Jika di EDJS juga tidak ada, baru tolak
+        if not edjs_matches: 
+            return f"🙏 Stok *'{clean_k}'* boten wonten."
+
+        # Jika di EDJS ada, susun pesan khusus EDJS
+        pesan = f"🙏 *Laden jawab ya...*\nPencarian: {kw_search.upper()} (Hanya di Vendor)\n------------------\n"
+        for match in edjs_matches[:3]: 
+            desc_text = match['desc'] if match['desc'] and match['desc'] != match['pn'] else "Item Vendor"
+            pesan += f"*{desc_text}*\n"
+            pesan += f"Mat : {match['pn']}\n"
+            pesan += "SIS - 0\n"
+            pesan += f"EDJS - {int(match['qty'])}\n"
+            pesan += "------------------\n"
+        return pesan
+
+    # Kelompokkan per (mat, batch) untuk SAP
+    unik_items = []
     seen = set()
     for x in hasil:
-        if x['mat'] not in seen:
-            unik_mat_list.append(x['mat'])
-            seen.add(x['mat'])
-    total_items = len(unik_mat_list)
-    
-    ITEMS_PER_PAGE = 10 
+        key = (x['mat'], x['batch'])
+        if key not in seen:
+            unik_items.append(key)
+            seen.add(key)
+
+    total_items = len(unik_items)
+    ITEMS_PER_PAGE = 10
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-    
-    if page >= total_pages and page > 0: return "⚠️ Sudah halaman terakhir, Pak."
 
-    start_idx = page * ITEMS_PER_PAGE
-    end_idx = start_idx + ITEMS_PER_PAGE
-    
-    if is_batch:
-        current_page_mats = unik_mat_list[:3]
-    else:
-        current_page_mats = unik_mat_list[start_idx:end_idx]
+    if page >= total_pages and page > 0: return "⚠️ Halaman terakhir."
 
-    pesan_koreksi = ""
-    if not hasil and not is_batch:
-        all_names = list(set([d['desc'] for d in data]))
-        mirip = difflib.get_close_matches(keyword_search.upper(), all_names, n=1, cutoff=0.7) 
-        if mirip:
-            tebakan = mirip[0]
-            pesan_koreksi = f"⚠️ _Mboten wonten. Maksud Bapak:_ *{tebakan}*?\n"
-            hasil = [d for d in data if tebakan.lower() in d['desc'].lower()]
+    start = page * ITEMS_PER_PAGE
+    current_items = unik_items[:3] if is_batch else unik_items[start:start + ITEMS_PER_PAGE]
 
-    if not hasil: 
-        if is_batch: return f"❌ {keyword_search.upper()}: ⛔ Tidak Ditemukan\n"
-        return f"🙏 Stok *'{clean_keyword}'* boten wonten."
+    pesan = f"🙏 *Laden jawab ya...*\nPencarian: {kw_search.upper()} ({total_items} items)\n" if not is_batch else ""
+    if not is_batch: pesan += f"📖 Halaman {page+1} dari {total_pages}\n------------------\n"
 
-    pesan = ""
-    if not is_batch:
-        pesan = f"🙏 *Laden jawab ya...*\n"
-        if pesan_koreksi: pesan += pesan_koreksi
-        pesan += f"Pencarian: {keyword_search.upper()} ({total_items} items)\n"
-        pesan += f"📖 Halaman {page+1} dari {total_pages}\n"
-        pesan += "------------------\n"
-    
-    for mat_id in current_page_mats:
-        items_same_mat = [x for x in hasil if x['mat'] == mat_id]
-        first_item = items_same_mat[0]
-        nama_barang = first_item['desc']
-        batch_info = f"({first_item['batch']})" if first_item['batch'] else ""
-        spec_text = f"({first_item['spec']})" if first_item['spec'] else ""
-        m_qty = sum(x['qty'] for x in items_same_mat if '40AI' in x['plant'].upper())
-        h_qty = sum(x['qty'] for x in items_same_mat if '40AJ' in x['plant'].upper())
-        
-        locs_m = set(x['bin'] for x in items_same_mat if '40AI' in x['plant'].upper())
-        locs_h = set(x['bin'] for x in items_same_mat if '40AJ' in x['plant'].upper())
-        str_loc_m = ", ".join([l for l in locs_m if clean_text(l)]) or "-"
-        str_loc_h = ", ".join([l for l in locs_h if clean_text(l)]) or "-"
+    for mat_id, b_val in current_items:
+        grup = [x for x in hasil if x['mat'] == mat_id and x['batch'] == b_val]
+        if not grup: continue
 
-        pesan += f"*{nama_barang} {batch_info}*\n"
-        pesan += f"Mat: {mat_id} {spec_text}\n"
-        pesan += f"Mining : {int(m_qty)} | Hauling : {int(h_qty)}\n"
-        pesan += f"({str_loc_m} | {str_loc_h})\n"
-        
-        if is_batch:
-            pesan += "------------------\n" 
+        first = grup[0]
+        batch_label = f" ({b_val})" if b_val else ""
+        spec_label = f" ({first['spec']})" if first['spec'] else ""
+        pesan += f"*{first['desc']}{batch_label}*\n"
+        pesan += f"Mat : {mat_id}{spec_label}\n"
+
+        SLOC_KOSONG = {"-", "", "nan", "none", "null"}
+        sloc_set = set()
+        for x in grup:
+            s = x['sloc'].strip().upper() if x['sloc'] else ""
+            if s and s not in SLOC_KOSONG:
+                sloc_set.add(s)
+        slocs = sorted(sloc_set)
+
+        total_internal = int(sum(x['qty'] for x in grup
+                                 if '40AI' in x['plant'].upper() or '40AJ' in x['plant'].upper()))
+
+        if not slocs or total_internal == 0:
+            pesan += "SIS - 0\n"
         else:
-            pesan += "\n"
+            for sloc in slocs:
+                sloc_grup = [x for x in grup if x['sloc'].strip().upper() == sloc]
+
+                m_items = [x for x in sloc_grup if '40AI' in x['plant'].upper()]
+                h_items = [x for x in sloc_grup if '40AJ' in x['plant'].upper()]
+
+                m_qty = int(sum(x['qty'] for x in m_items))
+                h_qty = int(sum(x['qty'] for x in h_items))
+
+                # Kumpulkan semua bin unik, abaikan yang kosong, lalu urutkan
+                m_bins_list = sorted(set(clean_text(x['bin']) for x in m_items if clean_text(x['bin'])))
+                h_bins_list = sorted(set(clean_text(x['bin']) for x in h_items if clean_text(x['bin'])))
+
+                # Gabungkan dengan koma jika ada lebih dari 1 bin
+                m_bin = ", ".join(m_bins_list) if m_bins_list else "-"
+                h_bin = ", ".join(h_bins_list) if h_bins_list else "-"
+
+                m_str = f"{m_qty} ({m_bin})" if m_bin != "-" else f"{m_qty} (-)"
+                h_str = f"{h_qty} ({h_bin})" if h_bin != "-" else f"{h_qty} (-)"
+                
+
+                
+                
+
+                pesan += f"SIS {sloc} - Mining : {m_str} | Hauling : {h_str}\n"
+
+        edjs_qty = edjs_data.get(normalize_pn(mat_id))
+        if edjs_qty is not None:
+            pesan += f"EDJS - {int(edjs_qty['qty'])}\n"
+
+        pesan += "------------------\n"
 
     if not is_batch:
-        if page < total_pages - 1:
-             pesan += f"👇 _Ketik *Lagi* atau *Next* untuk halaman selanjutnya._\n"
+        if page < total_pages - 1: pesan += "👇 _Ketik *Next* untuk lanjut._\n"
+        pesan += f"🕒 {data[0]['last_update'] if data and 'last_update' in data[0] else 'Updated: -'}"
 
-        real_time = get_general_update_time()
-        pesan += f"🕒 Updated: {real_time}"
-        
     return pesan
 
-@app.route('/', methods=['GET'])
-def home(): return "LADEN V35 (EPODUR FIX & WHOLE WORD CHECK) RUNNING"
+# ==========================================
+# 4. PUSAT PEMROSESAN (STRICT LOGIC ENGINE V.44)
+# ==========================================
 
+def proses_pesan(message, sender_id):
+    if not message: return None
+    msg_l = message.lower().strip()
+    words = msg_l.split()
+    
+    if msg_l in ["lagi", "next", "lanjut", "berikutnya"]:
+        if sender_id in USER_SESSIONS:
+            s = USER_SESSIONS[sender_id]
+            s['page'] += 1
+            return cari_stok(s['keyword'], page=s['page'])
+    
+    has_part_number = bool(re.search(r'\d+-[a-zA-Z0-9-]+', msg_l))
+    is_blacklisted = any(w in msg_l for w in HARD_BLACKLIST)
+    is_chatty = any(w in words for w in CHATTY_WORDS)
+    has_command = any(cmd in words for cmd in COMMAND_WORDS)
+    
+    trigger_found = False
+    
+    if has_command:
+        if is_blacklisted or is_chatty:
+            trigger_found = False
+        elif has_part_number:
+            trigger_found = True 
+        elif len(words) <= 6:
+            trigger_found = True 
+            
+    if trigger_found:
+        clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', message)
+        
+        for t in ["tanya laden", "tanya den", "cek laden", "cek den", "tanya stok", "cek stok", "tolong cek stok", "cek", "stok", "stock", "laden", "bot", "min", "den", "tolong"]:
+            clean_msg = re.sub(r'\b'+t+r'\b', '', clean_msg, flags=re.IGNORECASE)
+        
+        raw_lines = re.split(r'[\n,]', clean_msg)
+        valid = [smart_clean_keyword(l) for l in raw_lines if len(smart_clean_keyword(l)) > 1]
+        
+        if not valid: return None
+        
+        is_b = len(valid) > 1
+        if not is_b: 
+            USER_SESSIONS[sender_id] = {'keyword': valid[0], 'page': 0}
+        
+        reply = "📦 *Hasil Multi-Item:*\n\n" if is_b else ""
+        for kw in valid: 
+            reply += cari_stok(kw, page=0, is_batch=is_b)
+            
+        return reply
+        
+    return None
+
+# ==========================================
+# 5. SERVER ENDPOINTS
+# ==========================================
+
+@app.route('/', methods=['GET'])
+def home(): 
+    return "LADEN V.44 STRICT MODE ACTIVE"
+
+@app.route('/test', methods=['POST'])
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
-    print(f"[DEBUG] Masuk: {json.dumps(data)}", file=sys.stdout, flush=True)
-
-    message = data.get('message') or data.get('pesan') 
-    target_reply = data.get('pengirim') or data.get('id') or data.get('sender')
-    sender_id = target_reply 
-
-    if message:
-        msg_lower = message.lower().strip()
-        words = msg_lower.split()
+    if not data: 
+        return jsonify({"result": "DIAM", "reply": ""}), 400
         
-        trigger_found = False
-        
-        # 1. CEK NEXT / LAGI
-        next_triggers = ["lagi", "next", "lanjut", "berikutnya", "more"]
-        if msg_lower in next_triggers:
-            if sender_id in USER_SESSIONS:
-                session = USER_SESSIONS[sender_id]
-                keyword_sess = session['keyword']
-                next_page = session['page'] + 1
-                USER_SESSIONS[sender_id]['page'] = next_page
-                jawaban = cari_stok(keyword_sess, page=next_page, is_batch=False)
-                requests.post("https://api.fonnte.com/send", headers={"Authorization": FONNTE_TOKEN}, data={"target": target_reply, "message": jawaban})
-                return jsonify({"status": "ok"}), 200
-        
-        # 2. TRIGGER DETECTION
-        is_direct_call = False
-        if msg_lower.startswith("@"):
-            parts = msg_lower.split(" ", 1)
-            first_word = parts[0]
-            for my_name in MY_BOT_NAME_KEYWORDS:
-                if my_name in first_word: is_direct_call = True
-            if "628" in first_word and len(first_word) > 10: is_direct_call = True
-            if is_direct_call: trigger_found = True
-
-        elif any(msg_lower.startswith(name) for name in MY_BOT_NAME_KEYWORDS):
-            trigger_found = True
-
-        if not trigger_found:
-            for trig in TRIGGERS_LAMA:
-                if trig in msg_lower:
-                    trigger_found = True
-                    break
-
-        # 3. JALUR UMUM (AUTO DETECT)
-        if not trigger_found:
-            has_trigger_word = any(w in words for w in UNIVERSAL_KEYWORDS)
-            
-            # Cek "di stok"
-            has_passive_stock = re.search(r'\bdi\s+sto[ck]', msg_lower)
-            
-            # --- V.35 FIX: WHOLE WORD CHECK FOR OPERATIONAL ---
-            # Agar "po" dalam "epodur" tidak terbaca sebagai Purchase Order
-            is_operational = False
-            for op_word in OPERATIONAL_WORDS:
-                # Regex \bkata\b memastikan hanya kata utuh yang dicek
-                if re.search(r'\b' + re.escape(op_word) + r'\b', msg_lower):
-                    is_operational = True
-                    break
-
-            is_hard_blacklist = any(w in msg_lower for w in HARD_BLACKLIST)
-            
-            if has_trigger_word and not is_hard_blacklist and not is_operational and not has_passive_stock and len(words) <= 15:
-                trigger_found = True
-
-        # 4. SAFETY CHECK (STRICT MODE V.35)
-        if trigger_found:
-            has_part_number = re.search(r'\d+-[a-zA-Z0-9-]+', msg_lower)
-            is_hard_blacklist = any(w in msg_lower for w in HARD_BLACKLIST)
-            is_soft_blacklist = any(w in msg_lower for w in SOFT_BLACKLIST)
-            has_strong_trigger = any(w in words for w in UNIVERSAL_KEYWORDS)
-            
-            is_conversation = message.lower().startswith("bisa dibantu") or "maksud" in message.lower()
-            is_long_sentence = len(words) > 5
-            is_chatty = is_soft_blacklist and is_long_sentence
-
-            if has_part_number:
-                trigger_found = True 
-            elif is_hard_blacklist or is_conversation:
-                trigger_found = False 
-            elif is_chatty:
-                trigger_found = False
-            elif is_soft_blacklist and not has_strong_trigger:
-                trigger_found = False
-
-        # 5. EKSEKUSI
-        if trigger_found:
-            clean_msg = message
-            for trig in TRIGGERS_LAMA + UNIVERSAL_KEYWORDS + MY_BOT_NAME_KEYWORDS:
-                clean_msg = re.sub(r'\b'+trig+r'\b', '', clean_msg, flags=re.IGNORECASE)
-            clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', clean_msg)
-            
-            raw_lines = re.split(r'[\n,]', clean_msg)
-            
-            valid_searches = []
-            for line in raw_lines:
-                cleaned_line = smart_clean_keyword(line)
-                if cleaned_line and len(cleaned_line) > 1:
-                    valid_searches.append(cleaned_line)
-            
-            if not valid_searches:
-                return jsonify({"status": "ignored"}), 200
+    msg = data.get('message') or data.get('pesan') 
+    sender = data.get('pengirim') or data.get('sender') or "Local"
+    
+    jawaban = proses_pesan(msg, sender)
+    
+    if jawaban:
+        if FONNTE_TOKEN and "ISI_TOKEN" not in FONNTE_TOKEN:
+            try:
+                requests.post(
+                    "https://api.fonnte.com/send", 
+                    headers={"Authorization": FONNTE_TOKEN}, 
+                    data={"target": sender, "message": jawaban}
+                )
+            except Exception as e:
+                log(f"Fonnte Send Error: {e}")
                 
-            final_reply = ""
-            is_batch = len(valid_searches) > 1
-            
-            if is_batch: final_reply += "📦 *Hasil Pencarian Multi-Item:*\n\n"
-            
-            if not is_batch:
-                USER_SESSIONS[sender_id] = {'keyword': valid_searches[0], 'page': 0}
-
-            for keyword in valid_searches:
-                hasil_cari = cari_stok(keyword, page=0, is_batch=is_batch)
-                if hasil_cari:
-                    final_reply += hasil_cari
-            
-            if is_batch:
-                real_time = get_general_update_time()
-                final_reply += f"🕒 Updated: {real_time}"
-
-            requests.post(
-                "https://api.fonnte.com/send", 
-                headers={"Authorization": FONNTE_TOKEN},
-                data={"target": target_reply, "message": final_reply}
-            )
-
-    return jsonify({"status": "ok"}), 200
+        return jsonify({"result": "JAWAB", "reply": jawaban}), 200
+        
+    return jsonify({"result": "DIAM", "reply": ""}), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, threaded=True)
