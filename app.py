@@ -79,13 +79,29 @@ KAMUS_SINONIM = {
     "silinder": "cylinder", 
     "fuse": "fuse",
     "fatigue": "fatique",  # Jika user ketik pakai G, cari di database pakai Q
-    "fatique": "fatique"   # Jika user ketik pakai Q, tetap cari pakai Q
+    "fatique": "fatique",  # Jika user ketik pakai Q, tetap cari pakai Q
+    # --- PENAMBAHAN SINONIM BARU (V.4.16) ---
+    "rotari": "rotary",
+    "cat": "paint",
+    "jotun": "paint",
+    "epodur": "paint",
+    "putih": "white",
+    "hitam": "black",
+    "merah": "red",
+    "kuning": "yellow",
+    "hijau": "green",
+    "biru": "blue",
+    "abu": "gray",
+    "abu-abu": "gray"
 }
 
-# --- MODE KETAT (STRICT MODE V.44) ---
+# --- MODE KETAT (STRICT MODE V.4.16) ---
 CHATTY_WORDS = [
     "otomatis", "iso", "kah", "apakah", "gimana", "bagaimana", 
-    "cara", "kenapa", "kok", "e", "nya", "sih", "dong", "tuh", "nih"
+    "cara", "kenapa", "kok", "e", "nya", "sih", "dong", "tuh", "nih",
+    # --- PENAMBAHAN FILTER BASA-BASI LAPANGAN (V.4.16) ---
+    "dah", "udah", "dulu", "habiskan", "appv", "approve", "kt", "kita", 
+    "nanti", "lagi"
 ]
 
 # PENAMBAHAN FILTER ANTI-REPORT (V.4.14)
@@ -305,7 +321,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     
     words = [KAMUS_SINONIM.get(k, k) for k in clean_k.lower().split()]
     kw_search = " ".join(words)
-    kw_search_norm = normalize_pn(kw_search) # V.4.15 Normalisasi keyword untuk pencarian akurat
+    kw_search_norm = normalize_pn(kw_search) 
 
     edjs_data = get_edjs_data()
 
@@ -313,8 +329,8 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     hasil = []
     for item in data:
         match_desc = all(k in item['desc'].lower() for k in words)
-        match_mat = kw_search in item['mat'].lower() # Pencarian mentah (dengan strip)
-        match_mat_norm = (kw_search_norm in normalize_pn(item['mat'])) if kw_search_norm else False # Pencarian bersih
+        match_mat = kw_search in item['mat'].lower() 
+        match_mat_norm = (kw_search_norm in normalize_pn(item['mat'])) if kw_search_norm else False 
         
         if match_desc or match_mat or match_mat_norm:
             hasil.append(item)
@@ -323,8 +339,8 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     edjs_matches = []
     for norm_pn, val in edjs_data.items():
         match_desc = all(k in str(val.get('desc', '')).lower() for k in words)
-        match_pn = kw_search in val['pn'].lower() # Pencarian mentah
-        match_pn_norm = (kw_search_norm in norm_pn) if kw_search_norm else False # Pencarian bersih
+        match_pn = kw_search in val['pn'].lower() 
+        match_pn_norm = (kw_search_norm in norm_pn) if kw_search_norm else False 
         
         if match_desc or match_pn or match_pn_norm:
             edjs_matches.append(val)
@@ -431,7 +447,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     return pesan
 
 # ==========================================
-# 4. PUSAT PEMROSESAN (STRICT LOGIC ENGINE V.44)
+# 4. PUSAT PEMROSESAN (STRICT LOGIC ENGINE V.4.16)
 # ==========================================
 
 def proses_pesan(message, sender_id):
@@ -489,7 +505,7 @@ def proses_pesan(message, sender_id):
 
 @app.route('/', methods=['GET'])
 def home(): 
-    return "LADEN V.4.15 ACTIVE"
+    return "LADEN V.4.16 ACTIVE"
 
 @app.route('/test', methods=['POST'])
 @app.route('/webhook', methods=['POST'])
