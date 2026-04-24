@@ -8,6 +8,7 @@ import difflib
 import sys
 from datetime import datetime, timedelta
 import re
+import time
 
 app = Flask(__name__)
 
@@ -23,6 +24,7 @@ CACHE_DATA = []
 CACHE_TIMESTAMP = None
 CACHE_DURATION = 900 
 USER_SESSIONS = {}
+PROCESSED_WEBHOOKS = {}
 
 # --- EDJS VENDOR DATA ---
 CACHE_EDJS = {}
@@ -542,6 +544,15 @@ def webhook():
         if sender == "Local":
             log("Pesan tidak diteruskan ke Starsender karena nomor pengirim tidak ditemukan (Local).")
         elif STARSENDER_API_KEY and "PASTE_API_KEY_DISINI" not in STARSENDER_API_KEY:
+            current_time = time.time()
+            msg_signature = f"{sender}_{msg}"
+
+            if msg_signature in PROCESSED_WEBHOOKS:
+                if current_time - PROCESSED_WEBHOOKS[msg_signature] < 10:
+                    log("Duplicate webhook dari Starsender terdeteksi, mengabaikan request kedua.")
+                    return jsonify({"reply": "Duplicate ignored"}), 200
+
+            PROCESSED_WEBHOOKS[msg_signature] = current_time
             try:
                 requests.post(
                     "https://api.starsender.online/api/send",
