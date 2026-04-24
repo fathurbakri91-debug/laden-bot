@@ -375,6 +375,11 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     
     clean_k = smart_clean_keyword(raw_keyword)
     if not clean_k or len(clean_k) < 2: return ""
+
+    # BLOKIR ANGKA SISA (Mencegah pencarian kuantitas seperti "1000", "2")
+    # Jika yang tersisa murni HANYA angka dan kurang dari 6 digit, bot diam.
+    if clean_k.replace(" ", "").isdigit() and len(clean_k.replace(" ", "")) < 6:
+        return ""
     
     words = [KAMUS_SINONIM.get(k, k) for k in clean_k.lower().split()]
     kw_search = " ".join(words)
@@ -640,6 +645,8 @@ def webhook():
         
     return jsonify({"reply": ""}), 200
 
+# Jalankan sync_kamus otomatis saat di-load oleh Render/Gunicorn
+sync_kamus()
+
 if __name__ == '__main__':
-    sync_kamus()
     app.run(host='0.0.0.0', port=5000, threaded=True)
