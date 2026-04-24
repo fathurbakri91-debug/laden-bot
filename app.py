@@ -535,9 +535,16 @@ def webhook():
         if STARSENDER_API_KEY and "PASTE_API_KEY_DISINI" not in STARSENDER_API_KEY:
             try:
                 requests.post(
-                    "https://api.starsender.online/api/sendText",
-                    headers={"apikey": STARSENDER_API_KEY},
-                    json={"tujuan": sender, "pesan": jawaban},
+                    "https://api.starsender.online/api/send",
+                    headers={
+                        "Content-Type": "application/json", 
+                        "Authorization": STARSENDER_API_KEY
+                    },
+                    json={
+                        "messageType": "text",
+                        "to": sender,
+                        "body": jawaban
+                    },
                     timeout=5
                 )
             except Exception as e:
