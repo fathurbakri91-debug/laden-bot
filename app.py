@@ -512,11 +512,18 @@ def home():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
+    log(f"Raw Webhook Data: {data}")
     if not data: 
         return jsonify({"reply": ""}), 400
         
-    msg = data.get('message') or data.get('pesan') 
-    sender = data.get('sender') or data.get('pengirim') or "Local"
+    msg = data.get('message') or data.get('text') or data.get('pesan')
+    sender = data.get('sender') or data.get('from') or data.get('pengirim')
+
+    if 'data' in data and isinstance(data['data'], dict):
+        if not msg: msg = data['data'].get('message') or data['data'].get('text')
+        if not sender: sender = data['data'].get('sender') or data['data'].get('from')
+
+    sender = sender or "Local"
     
     jawaban = proses_pesan(msg, sender)
     
@@ -532,7 +539,9 @@ def webhook():
         #     except Exception as e:
         #         log(f"Fonnte Send Error: {e}")
                 
-        if STARSENDER_API_KEY and "PASTE_API_KEY_DISINI" not in STARSENDER_API_KEY:
+        if sender == "Local":
+            log("Pesan tidak diteruskan ke Starsender karena nomor pengirim tidak ditemukan (Local).")
+        elif STARSENDER_API_KEY and "PASTE_API_KEY_DISINI" not in STARSENDER_API_KEY:
             try:
                 requests.post(
                     "https://api.starsender.online/api/send",
