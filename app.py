@@ -234,6 +234,60 @@ def get_edjs_data():
         return CACHE_EDJS
 
 
+def sync_kamus():
+    """Tarik data kamus dari worksheet KAMUS_BOT dan perbarui variabel global."""
+    global KAMUS_SINONIM, STOP_WORDS, HARD_BLACKLIST, CHATTY_WORDS
+    log("🔄 Sinkronisasi kamus dari Google Sheets...")
+    try:
+        json_creds = os.environ.get("GOOGLE_JSON_KEY")
+        if json_creds:
+            creds_dict = json.loads(json_creds)
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        elif os.path.exists("kunci_rahasia.json"):
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = ServiceAccountCredentials.from_json_keyfile_name("kunci_rahasia.json", scope)
+        else:
+            log("⚠️ Kunci rahasia JSON tidak ditemukan untuk sync kamus.")
+            return
+
+        client = gspread.authorize(creds)
+        ws = client.open_by_key(SHEET_ID).worksheet("KAMUS_BOT")
+        raw = ws.get_all_values()
+
+        if len(raw) < 2:
+            log("⚠️ Tab KAMUS_BOT kosong atau hanya header.")
+            return
+
+        new_sinonim = {}
+        new_chatty = []
+        new_blacklist = []
+        new_stopword = []
+
+        for row in raw[1:]:
+            if len(row) < 2: continue
+            kategori = str(row[0]).strip().upper()
+            kata = str(row[1]).strip().lower()
+            baku = str(row[2]).strip().lower() if len(row) > 2 else ""
+
+            if kategori == "SINONIM" and kata and baku:
+                new_sinonim[kata] = baku
+            elif kategori == "CHATTY" and kata:
+                new_chatty.append(kata)
+            elif kategori == "BLACKLIST" and kata:
+                new_blacklist.append(kata)
+            elif kategori == "STOPWORD" and kata:
+                new_stopword.append(kata)
+
+        KAMUS_SINONIM = new_sinonim
+        CHATTY_WORDS = new_chatty
+        HARD_BLACKLIST = new_blacklist
+        STOP_WORDS = new_stopword
+
+        log(f"✅ Kamus disinkronisasi: {len(new_sinonim)} sinonim, {len(new_chatty)} chatty, {len(new_blacklist)} blacklist, {len(new_stopword)} stopword.")
+    except Exception as e:
+        log(f"💥 Gagal sync kamus: {e}")
+
 def clean_text(text):
     if text is None: return ""
     t = str(text).strip()
@@ -367,6 +421,9 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
                 seen.add(key)
 
     if not unik_items:
+        # Jika kata kunci tidak ada angka SAMA SEKALI dan panjangnya kurang dari 4 huruf (misal: "kan", "tlg")
+        if not any(char.isdigit() for char in clean_k) and len(clean_k.replace(" ", "")) < 4:
+            return "" # Bot diam (Silent Mode)
         return f"🙏 Stok *'{clean_k}'* boten wonten."
 
     total_items = len(unik_items)
@@ -455,6 +512,11 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
 
 def proses_pesan(message, sender_id):
     if not message: return None
+    
+    # Jika ada mention/tag manusia (simbol @), asumsikan pesan bukan untuk bot
+    if "@" in message and not any(bot_name in message.lower() for bot_name in ["@laden", "@bot"]):
+        return None
+        
     msg_l = message.lower().strip()
     words = msg_l.split()
     
@@ -486,7 +548,7 @@ def proses_pesan(message, sender_id):
             clean_msg = re.sub(r'\b'+t+r'\b', '', clean_msg, flags=re.IGNORECASE)
         
         raw_lines = re.split(r'[\n,]', clean_msg)
-        valid = [smart_clean_keyword(l) for l in raw_lines if len(smart_clean_keyword(l)) > 1]
+        valid = [smart_clean_keyword(l) for l in raw_lines if len(smart_clean_keyword(l).strip()) > 2]
         
         if not valid: return None
         
@@ -527,6 +589,10 @@ def webhook():
 
     sender = sender or "Local"
     
+    if msg and msg.strip().lower() == "/updatekamus":
+        sync_kamus()
+        return jsonify({"reply": "✅ Kamus berhasil disinkronisasi dari Google Sheets!"}), 200
+
     jawaban = proses_pesan(msg, sender)
     
     if jawaban:
@@ -575,4 +641,5 @@ def webhook():
     return jsonify({"reply": ""}), 200
 
 if __name__ == '__main__':
+    sync_kamus()
     app.run(host='0.0.0.0', port=5000, threaded=True)
