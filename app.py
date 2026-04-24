@@ -15,6 +15,7 @@ app = Flask(__name__)
 # 1. KONFIGURASI & MEMORY
 # ==========================================
 FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN") or "ISI_TOKEN_DISINI"
+STARSENDER_API_KEY = "0486d8c7-1bb2-479d-b97d-7c0a4dd09be0"
 SHEET_ID = "1GMQ15xaMpJokmyNeckO6PRxtajiRV4yHB1U0wirRcGU"
 MY_BOT_NAME_KEYWORDS = ["laden", "bot", "den", "min"] 
 
@@ -512,27 +513,39 @@ def home():
 def webhook():
     data = request.json
     if not data: 
-        return jsonify({"result": "DIAM", "reply": ""}), 400
+        return jsonify({"reply": ""}), 400
         
     msg = data.get('message') or data.get('pesan') 
-    sender = data.get('pengirim') or data.get('sender') or "Local"
+    sender = data.get('sender') or data.get('pengirim') or "Local"
     
     jawaban = proses_pesan(msg, sender)
     
     if jawaban:
-        if FONNTE_TOKEN and "ISI_TOKEN" not in FONNTE_TOKEN:
+        # if FONNTE_TOKEN and "ISI_TOKEN" not in FONNTE_TOKEN:
+        #     try:
+        #         requests.post(
+        #             "https://api.fonnte.com/send", 
+        #             headers={"Authorization": FONNTE_TOKEN}, 
+        #             data={"target": sender, "message": jawaban},
+        #             timeout=5
+        #         )
+        #     except Exception as e:
+        #         log(f"Fonnte Send Error: {e}")
+                
+        if STARSENDER_API_KEY and "PASTE_API_KEY_DISINI" not in STARSENDER_API_KEY:
             try:
                 requests.post(
-                    "https://api.fonnte.com/send", 
-                    headers={"Authorization": FONNTE_TOKEN}, 
-                    data={"target": sender, "message": jawaban}
+                    "https://api.starsender.online/api/sendText",
+                    headers={"apikey": STARSENDER_API_KEY},
+                    json={"tujuan": sender, "pesan": jawaban},
+                    timeout=5
                 )
             except Exception as e:
-                log(f"Fonnte Send Error: {e}")
+                log(f"Starsender Send Error: {e}")
                 
-        return jsonify({"result": "JAWAB", "reply": jawaban}), 200
+        return jsonify({"reply": jawaban}), 200
         
-    return jsonify({"result": "DIAM", "reply": ""}), 200
+    return jsonify({"reply": ""}), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, threaded=True)
