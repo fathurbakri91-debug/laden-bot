@@ -607,21 +607,25 @@ def webhook():
         
     msg = data.get('message') or data.get('text') or data.get('pesan')
     sender = data.get('sender') or data.get('from') or data.get('pengirim')
+    member = data.get('member') or data.get('participant') or ""
 
     if 'data' in data and isinstance(data['data'], dict):
         if not msg: msg = data['data'].get('message') or data['data'].get('text')
         if not sender: sender = data['data'].get('sender') or data['data'].get('from')
+        if not member: member = data['data'].get('member') or data['data'].get('participant') or ""
 
     sender = sender or "Local"
+    actual_user = member if member else sender
     
+    jawaban = None
     if msg and msg.strip().lower() == "/updatekamus":
-        if "6281213223016" in sender or "081213223016" in sender:
+        if "6281213223016" in actual_user or "081213223016" in actual_user:
             sync_kamus()
-            return jsonify({"reply": "✅ Kamus berhasil disinkronisasi dari Google Sheets!"}), 200
+            jawaban = "✅ Kamus berhasil disinkronisasi dari Google Sheets!"
         else:
-            return jsonify({"reply": "⚠️ Akses Ditolak.\n\nFitur ini hanya bisa dilakukan oleh Creator.\nSilakan hubungi Creator jika ingin menambahkan sesuatu.\nWA: 081213223016"}), 200
-
-    jawaban = proses_pesan(msg, sender)
+            jawaban = "⚠️ Akses Ditolak.\n\nFitur ini hanya bisa dilakukan oleh Creator.\nSilakan hubungi Creator jika ingin menambahkan sesuatu.\nWA: 081213223016"
+    else:
+        jawaban = proses_pesan(msg, sender)
     
     if jawaban:
         # if FONNTE_TOKEN and "ISI_TOKEN" not in FONNTE_TOKEN:
