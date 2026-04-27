@@ -341,7 +341,8 @@ def get_data_lightweight():
             'sloc': next((i for i, h in enumerate(headers) if any(x in h for x in ["location", "sloc", "lgort"])), -1),
             'spec': next((i for i, h in enumerate(headers) if "procurement" in h), -1),
             'upd': next((i for i, h in enumerate(headers) if "update" in h), -1),
-            'batch': next((i for i, h in enumerate(headers) if "batch" in h), -1)
+            'batch': next((i for i, h in enumerate(headers) if "batch" in h), -1),
+            'val_class': next((i for i, h in enumerate(headers) if "valuation" in h), -1)
         }
 
         clean_data = []
@@ -358,7 +359,8 @@ def get_data_lightweight():
                 'sloc': str(row[idx['sloc']]).strip() if idx['sloc'] != -1 and len(row) > idx['sloc'] else "-",
                 'spec': clean_text(row[idx['spec']]) if idx['spec'] != -1 and len(row) > idx['spec'] else "",
                 'last_update': clean_text(row[idx['upd']]) if idx['upd'] != -1 and len(row) > idx['upd'] else "",
-                'batch': clean_text(row[idx['batch']]) if idx['batch'] != -1 and len(row) > idx['batch'] else ""
+                'batch': clean_text(row[idx['batch']]) if idx['batch'] != -1 and len(row) > idx['batch'] else "",
+                'val_class': clean_text(row[idx['val_class']]) if idx['val_class'] != -1 and len(row) > idx['val_class'] else ""
             })
             
         CACHE_DATA = clean_data
@@ -376,10 +378,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     clean_k = smart_clean_keyword(raw_keyword)
     if not clean_k or len(clean_k) < 2: return ""
 
-    # BLOKIR ANGKA SISA (Mencegah pencarian kuantitas seperti "1000", "2")
-    # Jika yang tersisa murni HANYA angka dan kurang dari 6 digit, bot diam.
-    if clean_k.replace(" ", "").isdigit() and len(clean_k.replace(" ", "")) < 6:
-        return ""
+    is_short_num = clean_k.replace(" ", "").isdigit() and len(clean_k.replace(" ", "")) < 6
     
     words = [KAMUS_SINONIM.get(k, k) for k in clean_k.lower().split()]
     kw_search = " ".join(words)
@@ -387,25 +386,43 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
 
     edjs_data = get_edjs_data()
 
-    # PENCARIAN DI SAP (V.4.15 DUAL MATCHING)
+    # PENCARIAN DI SAP
     hasil = []
     for item in data:
-        match_desc = all(k in item['desc'].lower() for k in words)
-        match_mat = kw_search in item['mat'].lower() 
-        match_mat_norm = (kw_search_norm in normalize_pn(item['mat'])) if kw_search_norm else False 
+        # Normalisasi dengan membuang nol di depan (lstrip)
+        mat_norm = normalize_pn(item['mat']).lstrip('0')
+        kw_norm = kw_search_norm.lstrip('0')
         
-        if match_desc or match_mat or match_mat_norm:
-            hasil.append(item)
+        if is_short_num:
+            # Exact Match untuk angka pendek tanpa peduli nol di depan
+            if kw_norm and kw_norm == mat_norm:
+                hasil.append(item)
+        else:
+            match_desc = all(k in item['desc'].lower() for k in words)
+            match_mat = kw_search in item['mat'].lower() 
+            match_mat_norm = (kw_norm in mat_norm) if kw_norm else False 
+            
+            if match_desc or match_mat or match_mat_norm:
+                hasil.append(item)
 
-    # PENCARIAN DI EDJS/UT (V.4.15 DUAL MATCHING)
+    # PENCARIAN DI EDJS/UT
     edjs_matches = []
     for norm_pn, val in edjs_data.items():
-        match_desc = all(k in str(val.get('desc', '')).lower() for k in words)
-        match_pn = kw_search in val['pn'].lower() 
-        match_pn_norm = (kw_search_norm in norm_pn) if kw_search_norm else False 
+        # Normalisasi dengan membuang nol di depan (lstrip)
+        mat_norm = norm_pn.lstrip('0')
+        kw_norm = kw_search_norm.lstrip('0')
         
-        if match_desc or match_pn or match_pn_norm:
-            edjs_matches.append(val)
+        if is_short_num:
+            # Exact Match untuk angka pendek tanpa peduli nol di depan
+            if kw_norm and kw_norm == mat_norm:
+                edjs_matches.append(val)
+        else:
+            match_desc = all(k in str(val.get('desc', '')).lower() for k in words)
+            match_pn = kw_search in val['pn'].lower() 
+            match_pn_norm = (kw_norm in mat_norm) if kw_norm else False 
+            
+            if match_desc or match_pn or match_pn_norm:
+                edjs_matches.append(val)
 
     unik_items = []
     seen = set()
@@ -426,9 +443,10 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
                 seen.add(key)
 
     if not unik_items:
-        # Jika kata kunci tidak ada angka SAMA SEKALI dan panjangnya kurang dari 4 huruf (misal: "kan", "tlg")
+        if is_short_num:
+            return "" # Diam jika angka pendek (misal "1000") tidak ada exact match
         if not any(char.isdigit() for char in clean_k) and len(clean_k.replace(" ", "")) < 4:
-            return "" # Bot diam (Silent Mode)
+            return "" # Bot diam (Silent Mode huruf pendek)
         return f"🙏 Stok *'{clean_k}'* boten wonten."
 
     total_items = len(unik_items)
@@ -454,13 +472,15 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             desc_display = first['desc']
             batch_label = f" ({b_val})" if b_val else ""
             spec_label = f" ({first['spec']})" if first['spec'] else ""
+            val_label = f" ({first['val_class']})" if first.get('val_class') else ""
         else:
             desc_display = edjs_qty['desc'] if edjs_qty['desc'] else "Item Vendor"
             batch_label = ""
             spec_label = ""
+            val_label = ""
 
         pesan += f"*{desc_display}{batch_label}*\n"
-        pesan += f"Mat : {mat_id}{spec_label}\n"
+        pesan += f"Mat : {mat_id}{spec_label}{val_label}\n"
 
         if grup:
             SLOC_KOSONG = {"-", "", "nan", "none", "null"}
@@ -553,7 +573,7 @@ def proses_pesan(message, sender_id):
             clean_msg = re.sub(r'\b'+t+r'\b', '', clean_msg, flags=re.IGNORECASE)
         
         raw_lines = re.split(r'[\n,]', clean_msg)
-        valid = [smart_clean_keyword(l) for l in raw_lines if len(smart_clean_keyword(l).strip()) > 2]
+        valid = [smart_clean_keyword(l) for l in raw_lines if len(smart_clean_keyword(l).strip()) > 1]
         
         if not valid: return None
         
@@ -595,8 +615,11 @@ def webhook():
     sender = sender or "Local"
     
     if msg and msg.strip().lower() == "/updatekamus":
-        sync_kamus()
-        return jsonify({"reply": "✅ Kamus berhasil disinkronisasi dari Google Sheets!"}), 200
+        if "6281213223016" in sender or "081213223016" in sender:
+            sync_kamus()
+            return jsonify({"reply": "✅ Kamus berhasil disinkronisasi dari Google Sheets!"}), 200
+        else:
+            return jsonify({"reply": "⚠️ Akses Ditolak.\n\nFitur ini hanya bisa dilakukan oleh Creator.\nSilakan hubungi Creator jika ingin menambahkan sesuatu.\nWA: 081213223016"}), 200
 
     jawaban = proses_pesan(msg, sender)
     
