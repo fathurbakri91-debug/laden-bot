@@ -563,12 +563,21 @@ def proses_pesan(message, sender_id):
     trigger_found = False
     
     if has_command:
-        if is_blacklisted or is_chatty:
+        # Buat variabel pembantu untuk mengecek validitas Multi-Item (Enter)
+        segments = msg_l.split('\n')
+        is_valid_multi = len(segments) > 1 and all(len(seg.split()) <= 6 for seg in segments)
+
+        if is_blacklisted:
             trigger_found = False
-        elif has_part_number:
+        elif has_part_number or is_valid_multi:
+            # Lolos mutlak jika ada part number ATAU format enter yang valid
             trigger_found = True 
+        elif is_chatty:
+            # Blokir jika obrolan biasa (lebih dari 6 kata)
+            trigger_found = False
         elif len(words) <= 6:
-            trigger_found = True 
+            # Lolos untuk pencarian item tunggal di bawah 6 kata
+            trigger_found = True
             
     if trigger_found:
         clean_msg = re.sub(r'@[a-zA-Z0-9_]+', '', message)
