@@ -458,7 +458,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     if page >= total_pages and page > 0: return "⚠️ Halaman terakhir."
 
     start = page * ITEMS_PER_PAGE
-    current_items = unik_items[:3] if is_batch else unik_items[start:start + ITEMS_PER_PAGE]
+    current_items = unik_items[:10] if is_batch else unik_items[start:start + ITEMS_PER_PAGE]
 
     pesan = f"🙏 *Laden jawab ya...*\nPencarian: {kw_search.upper()} ({total_items} items)\n" if not is_batch else ""
     if not is_batch: pesan += f"📖 Halaman {page+1} dari {total_pages}\n------------------\n"
