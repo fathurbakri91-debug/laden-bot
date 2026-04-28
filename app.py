@@ -380,8 +380,9 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
 
     is_short_num = clean_k.replace(" ", "").isdigit() and len(clean_k.replace(" ", "")) < 6
     
-    words = [KAMUS_SINONIM.get(k, k) for k in clean_k.lower().split()]
-    kw_search = " ".join(words)
+    original_words = clean_k.lower().split()
+    translated_words = [KAMUS_SINONIM.get(k, k) for k in original_words]
+    kw_search = clean_k.lower() 
     kw_search_norm = normalize_pn(kw_search) 
 
     edjs_data = get_edjs_data()
@@ -398,7 +399,8 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             if kw_norm and kw_norm == mat_norm:
                 hasil.append(item)
         else:
-            match_desc = all(k in item['desc'].lower() for k in words)
+            # DUAL-WORD MATCHING: Cek kata asli ATAU kata terjemahan
+            match_desc = all( (original_words[i] in item['desc'].lower() or translated_words[i] in item['desc'].lower()) for i in range(len(original_words)) )
             match_mat = kw_search in item['mat'].lower() 
             match_mat_norm = (kw_norm in mat_norm) if kw_norm else False 
             
@@ -417,7 +419,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             if kw_norm and kw_norm == mat_norm:
                 edjs_matches.append(val)
         else:
-            match_desc = all(k in str(val.get('desc', '')).lower() for k in words)
+            match_desc = all( (original_words[i] in str(val.get('desc', '')).lower() or translated_words[i] in str(val.get('desc', '')).lower()) for i in range(len(original_words)) )
             match_pn = kw_search in val['pn'].lower() 
             match_pn_norm = (kw_norm in mat_norm) if kw_norm else False 
             
