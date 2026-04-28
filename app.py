@@ -384,6 +384,8 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     translated_words = [KAMUS_SINONIM.get(k, k) for k in original_words]
     kw_search = clean_k.lower() 
     kw_search_norm = normalize_pn(kw_search) 
+    translated_search = " ".join(translated_words)
+    trans_norm = normalize_pn(translated_search).lstrip('0')
 
     edjs_data = get_edjs_data()
 
@@ -396,13 +398,13 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         
         if is_short_num:
             # Exact Match untuk angka pendek tanpa peduli nol di depan
-            if kw_norm and kw_norm == mat_norm:
+            if kw_norm and (kw_norm == mat_norm or trans_norm == mat_norm):
                 hasil.append(item)
         else:
             # DUAL-WORD MATCHING: Cek kata asli ATAU kata terjemahan
             match_desc = all( (original_words[i] in item['desc'].lower() or translated_words[i] in item['desc'].lower()) for i in range(len(original_words)) )
-            match_mat = kw_search in item['mat'].lower() 
-            match_mat_norm = (kw_norm in mat_norm) if kw_norm else False 
+            match_mat = kw_search in item['mat'].lower() or translated_search in item['mat'].lower()
+            match_mat_norm = (kw_norm in mat_norm if kw_norm else False) or (trans_norm in mat_norm if trans_norm else False)
             
             if match_desc or match_mat or match_mat_norm:
                 hasil.append(item)
@@ -416,12 +418,12 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         
         if is_short_num:
             # Exact Match untuk angka pendek tanpa peduli nol di depan
-            if kw_norm and kw_norm == mat_norm:
+            if kw_norm and (kw_norm == mat_norm or trans_norm == mat_norm):
                 edjs_matches.append(val)
         else:
             match_desc = all( (original_words[i] in str(val.get('desc', '')).lower() or translated_words[i] in str(val.get('desc', '')).lower()) for i in range(len(original_words)) )
-            match_pn = kw_search in val['pn'].lower() 
-            match_pn_norm = (kw_norm in mat_norm) if kw_norm else False 
+            match_pn = kw_search in val['pn'].lower() or translated_search in val['pn'].lower()
+            match_pn_norm = (kw_norm in mat_norm if kw_norm else False) or (trans_norm in mat_norm if trans_norm else False)
             
             if match_desc or match_pn or match_pn_norm:
                 edjs_matches.append(val)
@@ -619,6 +621,16 @@ def webhook():
     sender = sender or "Local"
     actual_user = member if member else sender
     
+    # 1. DEBOUNCE LOGIC (Dipindah ke atas untuk mencegah Phantom Pagination)
+    current_time = time.time()
+    msg_signature = f"{sender}_{msg}"
+
+    if msg_signature in PROCESSED_WEBHOOKS:
+        if current_time - PROCESSED_WEBHOOKS[msg_signature] < 3: # Turunkan jadi 3 detik
+            return jsonify({"reply": "Duplicate ignored"}), 200
+            
+    PROCESSED_WEBHOOKS[msg_signature] = current_time
+    
     jawaban = None
     if msg and msg.strip().lower() == "/updatekamus":
         if "6281213223016" in actual_user or "081213223016" in actual_user:
@@ -644,15 +656,6 @@ def webhook():
         if sender == "Local":
             log("Pesan tidak diteruskan ke Starsender karena nomor pengirim tidak ditemukan (Local).")
         elif STARSENDER_API_KEY and "PASTE_API_KEY_DISINI" not in STARSENDER_API_KEY:
-            current_time = time.time()
-            msg_signature = f"{sender}_{msg}"
-
-            if msg_signature in PROCESSED_WEBHOOKS:
-                if current_time - PROCESSED_WEBHOOKS[msg_signature] < 10:
-                    log("Duplicate webhook dari Starsender terdeteksi, mengabaikan request kedua.")
-                    return jsonify({"reply": "Duplicate ignored"}), 200
-
-            PROCESSED_WEBHOOKS[msg_signature] = current_time
             try:
                 requests.post(
                     "https://api.starsender.online/api/send",
