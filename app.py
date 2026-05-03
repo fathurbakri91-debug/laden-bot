@@ -514,7 +514,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
                                      if '40AI' in x['plant'].upper() or '40AJ' in x['plant'].upper()))
 
             if not slocs or total_internal == 0:
-                pesan += "SIS - 0\n"
+                pesan += "SAP - 0\n"
             else:
                 for sloc in slocs:
                     sloc_grup = [x for x in grup if x['sloc'].strip().upper() == sloc]
@@ -534,9 +534,9 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
                     m_str = f"{m_qty} ({m_bin})" if m_bin != "-" else f"{m_qty} (-)"
                     h_str = f"{h_qty} ({h_bin})" if h_bin != "-" else f"{h_qty} (-)"
 
-                    pesan += f"SIS {sloc} - Mining : {m_str} | Hauling : {h_str}\n"
+                    pesan += f"{sloc} - 40AI : {m_str} | 40AJ : {h_str}\n"
         else:
-            pesan += "SIS - 0\n"
+            pesan += "SAP - 0\n"
 
         if vendor_details_combined:
             for loc, qty in vendor_details_combined.items():
