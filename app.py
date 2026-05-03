@@ -26,9 +26,10 @@ CACHE_DURATION = 900
 USER_SESSIONS = {}
 PROCESSED_WEBHOOKS = {}
 
-# --- EDJS VENDOR DATA ---
-CACHE_EDJS = {}
-CACHE_EDJS_TIMESTAMP = None
+# --- VENDOR DATA (EDJS, MD, RAJAWALI) ---
+CACHE_VENDOR = {'EDJS': {}, 'MD': {}, 'RAJAWALI': {}}
+CACHE_VENDOR_TIMESTAMP = {'EDJS': None, 'MD': None, 'RAJAWALI': None}
+VENDOR_SHEETS = ['EDJS', 'MD', 'RAJAWALI']
 
 # ==========================================
 # 2. DATABASE KATA (KAMUS & FILTER PINTAR)
@@ -156,14 +157,17 @@ def connect_google_sheet():
         log(f"Error GSheet: {e}")
         return None
 
-def get_edjs_data():
-    global CACHE_EDJS, CACHE_EDJS_TIMESTAMP
+def get_vendor_data(sheet_name):
+    global CACHE_VENDOR, CACHE_VENDOR_TIMESTAMP
     now = datetime.now()
     
-    if CACHE_EDJS and CACHE_EDJS_TIMESTAMP and (now - CACHE_EDJS_TIMESTAMP).total_seconds() < CACHE_DURATION:
-        return CACHE_EDJS
+    cached = CACHE_VENDOR.get(sheet_name, {})
+    cached_ts = CACHE_VENDOR_TIMESTAMP.get(sheet_name)
+    
+    if cached and cached_ts and (now - cached_ts).total_seconds() < CACHE_DURATION:
+        return cached
         
-    log("🔄 Download Data EDJS dari Cloud...")
+    log(f"🔄 Download Data {sheet_name} dari Cloud...")
     try:
         json_creds = os.environ.get("GOOGLE_JSON_KEY")
         if json_creds:
@@ -175,20 +179,20 @@ def get_edjs_data():
             creds = ServiceAccountCredentials.from_json_keyfile_name("kunci_rahasia.json", scope)
         else: 
             log("⚠️ Kunci rahasia JSON tidak ditemukan!")
-            return CACHE_EDJS
+            return cached
 
         client = gspread.authorize(creds)
         
         try:
-            sheet = client.open_by_key(SHEET_ID).worksheet("EDJS")
+            sheet = client.open_by_key(SHEET_ID).worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            log("⚠️ Tab bernama 'EDJS' TIDAK DITEMUKAN di Spreadsheet!")
-            return CACHE_EDJS
+            log(f"⚠️ Tab bernama '{sheet_name}' TIDAK DITEMUKAN di Spreadsheet!")
+            return cached
             
         raw_rows = sheet.get_all_values()
         
         if len(raw_rows) < 2:
-            return CACHE_EDJS
+            return cached
             
         headers = [str(h).strip().lower() for h in raw_rows[0]]
         
@@ -198,8 +202,8 @@ def get_edjs_data():
         idx_loc = next((i for i, h in enumerate(headers) if "loc" in h or "plant" in h), -1)
         
         if idx_pn == -1 or idx_qty == -1:
-            log("⚠️ Gagal menemukan kolom 'Material' atau 'Total Stock' di tab EDJS.")
-            return CACHE_EDJS
+            log(f"⚠️ Gagal menemukan kolom 'Material' atau 'Total Stock' di tab {sheet_name}.")
+            return cached
             
         result = {}
         for row in raw_rows[1:]:
@@ -207,7 +211,7 @@ def get_edjs_data():
             
             pn_raw = str(row[idx_pn]).strip()
             pn_norm = normalize_pn(pn_raw)
-            loc = str(row[idx_loc]).strip() if idx_loc != -1 and len(row) > idx_loc else "EDJS"
+            loc = str(row[idx_loc]).strip() if idx_loc != -1 and len(row) > idx_loc else sheet_name
             
             try: 
                 qty = float(re.sub(r'[^\d.]', '', str(row[idx_qty])))
@@ -224,14 +228,14 @@ def get_edjs_data():
                     result[pn_norm]['details'][loc] = 0
                 result[pn_norm]['details'][loc] += qty
                     
-        CACHE_EDJS = result
-        CACHE_EDJS_TIMESTAMP = now
-        log(f"✅ EDJS (Cloud) dimuat: {len(result)} item unik.")
-        return CACHE_EDJS
+        CACHE_VENDOR[sheet_name] = result
+        CACHE_VENDOR_TIMESTAMP[sheet_name] = now
+        log(f"✅ {sheet_name} (Cloud) dimuat: {len(result)} item unik.")
+        return result
         
     except Exception as e:
-        log(f"💥 ERROR FATAL EDJS: {e}")
-        return CACHE_EDJS
+        log(f"💥 ERROR FATAL {sheet_name}: {e}")
+        return cached
 
 
 def sync_kamus():
@@ -387,8 +391,6 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
     translated_search = " ".join(translated_words)
     trans_norm = normalize_pn(translated_search).lstrip('0')
 
-    edjs_data = get_edjs_data()
-
     # PENCARIAN DI SAP
     hasil = []
     for item in data:
@@ -409,24 +411,28 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             if match_desc or match_mat or match_mat_norm:
                 hasil.append(item)
 
-    # PENCARIAN DI EDJS/UT
-    edjs_matches = []
-    for norm_pn, val in edjs_data.items():
-        # Normalisasi dengan membuang nol di depan (lstrip)
-        mat_norm = norm_pn.lstrip('0')
-        kw_norm = kw_search_norm.lstrip('0')
+    # PENCARIAN DI VENDOR (EDJS, MD, RAJAWALI)
+    vendor_matches = []
+    all_vendor_data = {} # Gabungkan semua data vendor untuk referensi display nanti
+    
+    for v_sheet in VENDOR_SHEETS:
+        v_data = get_vendor_data(v_sheet)
+        all_vendor_data[v_sheet] = v_data
         
-        if is_short_num:
-            # Exact Match untuk angka pendek tanpa peduli nol di depan
-            if kw_norm and (kw_norm == mat_norm or trans_norm == mat_norm):
-                edjs_matches.append(val)
-        else:
-            match_desc = all( (original_words[i] in str(val.get('desc', '')).lower() or translated_words[i] in str(val.get('desc', '')).lower()) for i in range(len(original_words)) )
-            match_pn = kw_search in val['pn'].lower() or translated_search in val['pn'].lower()
-            match_pn_norm = (kw_norm in mat_norm if kw_norm else False) or (trans_norm in mat_norm if trans_norm else False)
+        for norm_pn, val in v_data.items():
+            mat_norm = norm_pn.lstrip('0')
+            kw_norm = kw_search_norm.lstrip('0')
             
-            if match_desc or match_pn or match_pn_norm:
-                edjs_matches.append(val)
+            if is_short_num:
+                if kw_norm and (kw_norm == mat_norm or trans_norm == mat_norm):
+                    vendor_matches.append(val)
+            else:
+                match_desc = all( (original_words[i] in str(val.get('desc', '')).lower() or translated_words[i] in str(val.get('desc', '')).lower()) for i in range(len(original_words)) )
+                match_pn = kw_search in val['pn'].lower() or translated_search in val['pn'].lower()
+                match_pn_norm = (kw_norm in mat_norm if kw_norm else False) or (trans_norm in mat_norm if trans_norm else False)
+                
+                if match_desc or match_pn or match_pn_norm:
+                    vendor_matches.append(val)
 
     unik_items = []
     seen = set()
@@ -436,7 +442,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             unik_items.append(key)
             seen.add(key)
 
-    for val in edjs_matches:
+    for val in vendor_matches:
         norm_val_pn = normalize_pn(val['pn'])
         pn_in_sap = any(normalize_pn(x['mat']) == norm_val_pn for x in hasil)
         
@@ -467,9 +473,18 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
 
     for mat_id, b_val in current_items:
         grup = [x for x in hasil if x['mat'] == mat_id and x['batch'] == b_val]
-        edjs_qty = edjs_data.get(normalize_pn(mat_id))
+        
+        # Gabungkan stok dari semua vendor untuk mat_id ini
+        vendor_details_combined = {}
+        vendor_desc_fallback = "Item Vendor"
+        for v_sheet in VENDOR_SHEETS:
+            v_qty = all_vendor_data[v_sheet].get(normalize_pn(mat_id))
+            if v_qty:
+                vendor_desc_fallback = v_qty['desc']
+                for loc, qty in v_qty['details'].items():
+                    vendor_details_combined[loc] = vendor_details_combined.get(loc, 0) + qty
 
-        if not grup and not edjs_qty: continue
+        if not grup and not vendor_details_combined: continue
 
         if grup:
             first = grup[0]
@@ -478,7 +493,7 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
             spec_label = f" ({first['spec']})" if first['spec'] else ""
             val_label = f" ({first['val_class']})" if first.get('val_class') else ""
         else:
-            desc_display = edjs_qty['desc'] if edjs_qty['desc'] else "Item Vendor"
+            desc_display = vendor_desc_fallback
             batch_label = ""
             spec_label = ""
             val_label = ""
@@ -523,8 +538,8 @@ def cari_stok(raw_keyword, page=0, is_batch=False):
         else:
             pesan += "SIS - 0\n"
 
-        if edjs_qty is not None:
-            for loc, qty in edjs_qty['details'].items():
+        if vendor_details_combined:
+            for loc, qty in vendor_details_combined.items():
                 pesan += f"{loc} - {int(qty)}\n"
 
         pesan += "------------------\n"
